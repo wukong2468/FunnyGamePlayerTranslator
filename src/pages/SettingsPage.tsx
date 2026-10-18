@@ -919,38 +919,40 @@ export default function SettingsPage() {
         </Stack>
       )}
 
-      <SectionCard title="数据与版本" subtitle="所有数据保存在本机应用数据目录">
-        <Stack spacing={1.5}>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              数据目录
-            </Typography>
-            <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
-              {appInfo?.dataDir ?? '—'}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Chip size="small" variant="outlined" label={`版本 ${appInfo?.version ?? '1.0.0'}`} />
-            <Button
-              size="small"
-              startIcon={<FolderOpenOutlinedIcon />}
-              disabled={!isDesktop || !appInfo}
-              onClick={async () => {
-                if (!appInfo) {
-                  return;
-                }
-                try {
-                  await revealItemInDir(appInfo.dataDir);
-                } catch (error) {
-                  notify('error', errorMessage(error));
-                }
-              }}
-            >
-              打开数据目录
-            </Button>
-          </Box>
-        </Stack>
-      </SectionCard>
+      <Box sx={{ mt: 2.5 }}>
+        <SectionCard title="数据与版本" subtitle="所有数据保存在本机应用数据目录">
+          <Stack spacing={1.5}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                数据目录
+              </Typography>
+              <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                {appInfo?.dataDir ?? '—'}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Chip size="small" variant="outlined" label={`版本 ${appInfo?.version ?? '1.0.0'}`} />
+              <Button
+                size="small"
+                startIcon={<FolderOpenOutlinedIcon />}
+                disabled={!isDesktop || !appInfo}
+                onClick={async () => {
+                  if (!appInfo) {
+                    return;
+                  }
+                  try {
+                    await revealItemInDir(appInfo.dataDir);
+                  } catch (error) {
+                    notify('error', errorMessage(error));
+                  }
+                }}
+              >
+                打开数据目录
+              </Button>
+            </Box>
+          </Stack>
+        </SectionCard>
+      </Box>
     </>
   );
 }
