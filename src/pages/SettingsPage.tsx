@@ -291,7 +291,17 @@ export default function SettingsPage() {
         description="外观设置会即时预览并自动保存；接口与翻译参数保存后对后续任务生效。"
         actions={
           dirty || appearanceDirty ? (
-            <Chip color="warning" variant="outlined" label="有未保存的修改" />
+            <>
+              <Chip color="warning" variant="outlined" label="有未保存的修改" />
+              <Button
+                variant="contained"
+                startIcon={<SaveOutlinedIcon />}
+                onClick={() => void handleSave()}
+                disabled={saving}
+              >
+                {saving ? '保存中…' : '保存设置'}
+              </Button>
+            </>
           ) : (
             <Chip color="success" variant="outlined" icon={<CheckCircleOutlineIcon />} label="设置已保存" />
           )
@@ -909,40 +919,6 @@ export default function SettingsPage() {
         </Stack>
       )}
 
-      <Paper
-        variant="outlined"
-        sx={{
-          mt: 2.5,
-          p: 1.5,
-          px: 2,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          flexWrap: 'wrap',
-          bgcolor: 'background.paper',
-        }}
-      >
-        <Box sx={{ flex: 1, minWidth: 160 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {dirty || appearanceDirty ? '修改尚未保存' : '所有修改已保存'}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            外观设置会自动保存；接口与翻译参数点击保存后生效
-          </Typography>
-        </Box>
-        <Button variant="outlined" onClick={() => setTab(1)} startIcon={<ApiOutlinedIcon />}>
-          接口设置
-        </Button>
-        <Button
-          variant="contained"
-          startIcon={<SaveOutlinedIcon />}
-          onClick={() => void handleSave()}
-          disabled={saving}
-        >
-          {saving ? '正在保存…' : '保存设置'}
-        </Button>
-      </Paper>
-
       <SectionCard title="数据与版本" subtitle="所有数据保存在本机应用数据目录">
         <Stack spacing={1.5}>
           <Box>
@@ -953,15 +929,7 @@ export default function SettingsPage() {
               {appInfo?.dataDir ?? '—'}
             </Typography>
           </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary">
-              工作区根目录
-            </Typography>
-            <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
-              {appInfo?.workspaceRoot ?? '—'}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip size="small" variant="outlined" label={`版本 ${appInfo?.version ?? '1.0.0'}`} />
             <Button
               size="small"

@@ -24,6 +24,8 @@ pub enum ItemStatus {
     Pending,
     Done,
     Failed,
+    /// 原文没有可翻译的文字（纯数字、符号或空条目），不计入翻译进度。
+    Skipped,
 }
 
 impl Default for ItemStatus {
@@ -276,6 +278,7 @@ pub struct ItemPage {
     pub done: usize,
     pub failed: usize,
     pub pending: usize,
+    pub skipped: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -306,6 +309,8 @@ pub struct ProjectCounts {
     pub done_count: usize,
     pub failed_count: usize,
     pub pending_count: usize,
+    /// 无需翻译（纯数字、符号或空条目）的条目数。
+    pub skipped_count: usize,
 }
 
 /// 条目状态统计：只数状态，不计算字符数，适合在任务过程中频繁调用。
@@ -314,6 +319,14 @@ pub struct StatusCounts {
     pub total: usize,
     pub done: usize,
     pub failed: usize,
+    pub skipped: usize,
+}
+
+impl StatusCounts {
+    /// 需要翻译的条目数（总数去掉无需翻译的条目）。
+    pub fn actionable(&self) -> usize {
+        self.total.saturating_sub(self.skipped)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -425,6 +438,7 @@ impl Project {
                     ItemStatus::Done => counts.done_count += 1,
                     ItemStatus::Failed => counts.failed_count += 1,
                     ItemStatus::Pending => counts.pending_count += 1,
+                    ItemStatus::Skipped => counts.skipped_count += 1,
                 }
             }
         }
@@ -441,6 +455,7 @@ impl Project {
                     ItemStatus::Done => counts.done += 1,
                     ItemStatus::Failed => counts.failed += 1,
                     ItemStatus::Pending => {}
+                    ItemStatus::Skipped => counts.skipped += 1,
                 }
             }
         }
@@ -485,6 +500,7 @@ impl Project {
                     "pending" => item.status == ItemStatus::Pending,
                     "done" => item.status == ItemStatus::Done,
                     "failed" => item.status == ItemStatus::Failed,
+                    "skipped" => item.status == ItemStatus::Skipped,
                     _ => true,
                 };
                 if !status_ok {
@@ -527,6 +543,7 @@ impl Project {
             done: counts.done_count,
             failed: counts.failed_count,
             pending: counts.pending_count,
+            skipped: counts.skipped_count,
         }
     }
 
@@ -557,6 +574,19 @@ impl Project {
         }
     }
 
+    /// 修正历史数据：无需翻译的条目统一标记为 Skipped。
+    pub fn normalize_statuses(&mut self) {
+        for group in &mut self.groups {
+            for item in &mut group.items {
+                if !item.is_translatable() && item.status != ItemStatus::Skipped {
+                    item.status = ItemStatus::Skipped;
+                    item.error = None;
+                    item.skipped = false;
+                }
+            }
+        }
+    }
+
     /// 从头执行：保留旧译文作为参考，全部重置为待处理。
     pub fn prepare_restart(&mut self) {
         for group in &mut self.groups {
@@ -570,7 +600,7 @@ impl Project {
                 item.status = if item.is_translatable() {
                     ItemStatus::Pending
                 } else {
-                    ItemStatus::Done
+                    ItemStatus::Skipped
                 };
                 item.error = None;
                 item.skipped = false;
@@ -700,7 +730,11 @@ impl Project {
                 item.apply_imported_translation(&translation);
                 // 与原文相同视为尚未翻译
                 if item.target_segments == item.source_segments {
-                    item.status = ItemStatus::Pending;
+                    item.status = if item.is_translatable() {
+                        ItemStatus::Pending
+                    } else {
+                        ItemStatus::Skipped
+                    };
                     item.manual = false;
                 }
                 report.applied += 1;
@@ -744,6 +778,9 @@ fn build_item(raw: RawTranslation) -> TextItem {
     };
 
     let has_source = source_segments.iter().any(|segment| !segment.trim().is_empty());
+    let translatable = source_segments
+        .iter()
+        .any(|segment| segment.chars().any(char::is_alphabetic));
     let translated = target_segments.iter().any(|segment| !segment.trim().is_empty())
         && target_segments != source_segments;
 
@@ -755,7 +792,9 @@ fn build_item(raw: RawTranslation) -> TextItem {
         },
         source_segments,
         target_segments,
-        status: if !has_source || translated {
+        status: if !has_source || !translatable {
+            ItemStatus::Skipped
+        } else if translated {
             ItemStatus::Done
         } else {
             ItemStatus::Pending
@@ -814,6 +853,24 @@ mod tests {
         assert_eq!(group["note"], "保留未知字段");
         assert_eq!(group["translations"].as_array().unwrap().len(), 3);
         assert_eq!(group["translations"][1]["translation_sequence"][0], "回复药");
+    }
+
+    #[test]
+    fn items_without_letters_are_skipped() {
+        let sample = r#"[
+          {"id": "g1", "translations": [
+            {"original": "1234", "original_sequence": ["1234"], "translation_sequence": ["1234"]},
+            {"original": "！？", "original_sequence": ["！？"], "translation_sequence": ["！？"]},
+            {"original": "佐伯", "original_sequence": ["佐伯"], "translation_sequence": ["佐伯"]}
+          ]},
+          {"id": "empty", "translations": []}
+        ]"#;
+        let project = Project::parse("D:/data/test.json", sample).unwrap();
+        let counts = project.counts();
+        assert_eq!(counts.item_count, 3);
+        assert_eq!(counts.skipped_count, 2);
+        assert_eq!(counts.done_count, 0);
+        assert_eq!(counts.pending_count, 1);
     }
 
     #[test]

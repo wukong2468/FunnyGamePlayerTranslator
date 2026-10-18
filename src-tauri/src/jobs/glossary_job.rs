@@ -62,11 +62,11 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
             session.progress.completed_groups.iter().cloned().collect();
         let mut plans = Vec::new();
         let mut auto_completed = 0usize;
+        // 只有包含可抽取文本的分组才计入进度，空分组单独记为“无需处理”
+        let mut total_groups = 0usize;
+        let mut done_baseline = 0usize;
 
         for group in &session.project.groups {
-            if completed.contains(&group.id) {
-                continue;
-            }
             let mut texts: Vec<String> = Vec::new();
             let mut seen: HashSet<String> = HashSet::new();
             for item in &group.items {
@@ -82,8 +82,15 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
                 }
             }
             if texts.is_empty() {
-                session.progress.completed_groups.push(group.id.clone());
-                auto_completed += 1;
+                if !completed.contains(&group.id) {
+                    session.progress.completed_groups.push(group.id.clone());
+                    auto_completed += 1;
+                }
+                continue;
+            }
+            total_groups += 1;
+            if completed.contains(&group.id) {
+                done_baseline += 1;
                 continue;
             }
             let chunks = chunk_texts(
@@ -100,9 +107,6 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         if auto_completed > 0 {
             session.glossary_dirty = true;
         }
-
-        let done_baseline = session.progress.completed_groups.len();
-        let total_groups = session.project.groups.len();
         (
             plans,
             session.project.source_lang.clone(),

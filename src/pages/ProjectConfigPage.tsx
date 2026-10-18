@@ -89,7 +89,7 @@ export default function ProjectConfigPage() {
     return null;
   }
 
-  const percent = formatPercent(summary.doneCount, summary.itemCount);
+  const percent = formatPercent(summary.doneCount, summary.itemCount - summary.skippedCount);
   const running = snapshots?.translate.phase === 'running';
   const glossaryRunning = snapshots?.glossary.phase === 'running';
 
@@ -115,6 +115,12 @@ export default function ProjectConfigPage() {
       value: formatNumber(summary.failedCount),
       color: summary.failedCount > 0 ? 'error' : 'default',
       icon: <ErrorOutlineIcon />,
+    },
+    {
+      label: '无需翻译',
+      value: formatNumber(summary.skippedCount),
+      hint: '纯数字、符号或空条目',
+      icon: <InfoOutlinedIcon />,
     },
     {
       label: '术语表',

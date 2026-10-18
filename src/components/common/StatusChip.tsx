@@ -9,6 +9,14 @@ const ITEM_COLORS: Record<ItemStatus, 'default' | 'success' | 'error'> = {
   pending: 'default',
   done: 'success',
   failed: 'error',
+  skipped: 'default',
+};
+
+const ITEM_OUTLINED: Record<ItemStatus, boolean> = {
+  pending: true,
+  done: false,
+  failed: false,
+  skipped: true,
 };
 
 const PHASE_COLORS: Record<JobPhase, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
@@ -27,7 +35,7 @@ export function StatusChip({ status, label }: { status: StatusValue; label?: str
       <Chip
         size="small"
         color={ITEM_COLORS[itemStatus]}
-        variant={itemStatus === 'pending' ? 'outlined' : 'filled'}
+        variant={ITEM_OUTLINED[itemStatus] ? 'outlined' : 'filled'}
         label={label ?? STATUS_LABELS[itemStatus]}
       />
     );

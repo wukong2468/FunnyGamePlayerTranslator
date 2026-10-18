@@ -188,6 +188,9 @@ const fallbackTranslate = (text: string): string => {
 
 // ---------------------------------------------------------------- 项目模型
 
+/** 原文是否包含可翻译文字（与后端 `is_translatable` 保持一致）。 */
+const hasTranslatableText = (text: string): boolean => /[\p{L}\p{Nl}]/u.test(text);
+
 interface MockItem {
   original: string;
   sourceSegments: string[];
@@ -297,13 +300,14 @@ function buildProject(sourcePath: string, parsed: ParsedGroup[]): MockProject {
           ? translation.translationSequence
           : [...sourceSegments];
       const hasSource = sourceSegments.some((segment) => segment.trim().length > 0);
+      const translatable = hasTranslatableText(sourceSegments.join('\n'));
       const translated = targetSegments.some((segment) => segment.trim().length > 0) &&
         targetSegments.join('\n') !== sourceSegments.join('\n');
       return {
         original: translation.original || sourceSegments.join('\n'),
         sourceSegments,
         targetSegments,
-        status: !hasSource || translated ? 'done' : 'pending',
+        status: !hasSource || !translatable ? 'skipped' : translated ? 'done' : 'pending',
         error: null,
         reference: null,
         skipped: false,
@@ -621,6 +625,7 @@ function projectCounts(): {
   doneCount: number;
   failedCount: number;
   pendingCount: number;
+  skippedCount: number;
 } {
   const counts = {
     groupCount: project?.groups.length ?? 0,
@@ -629,6 +634,7 @@ function projectCounts(): {
     doneCount: 0,
     failedCount: 0,
     pendingCount: 0,
+    skippedCount: 0,
   };
   if (!project) {
     return counts;
@@ -641,6 +647,8 @@ function projectCounts(): {
         counts.doneCount += 1;
       } else if (item.status === 'failed') {
         counts.failedCount += 1;
+      } else if (item.status === 'skipped') {
+        counts.skippedCount += 1;
       } else {
         counts.pendingCount += 1;
       }
@@ -705,6 +713,10 @@ function queueTranslateItems(job: MockJob): number {
   project.groups.forEach((group, groupIndex) => {
     group.items.forEach((item, itemIndex) => {
       if (item.status !== 'pending') {
+        return;
+      }
+      if (!hasTranslatableText(item.sourceSegments.join('\n'))) {
+        item.status = 'skipped';
         return;
       }
       const length = charCount(item.sourceSegments.join('\n'));
@@ -1056,6 +1068,7 @@ export const mockBackend: Backend = {
       done: counts.doneCount,
       failed: counts.failedCount,
       pending: counts.pendingCount,
+      skipped: counts.skippedCount,
     };
   },
 
@@ -1403,7 +1416,7 @@ export const mockBackend: Backend = {
             item.reference = [...item.targetSegments];
           }
           item.targetSegments = [...item.sourceSegments];
-          item.status = 'pending';
+          item.status = hasTranslatableText(source) ? 'pending' : 'skipped';
           item.error = null;
           item.skipped = false;
           item.manual = false;

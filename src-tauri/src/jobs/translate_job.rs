@@ -82,7 +82,8 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         )
     };
 
-    let total_items = counts.total;
+    // 进度分母只算需要翻译的条目，无需翻译的条目单独计数
+    let total_items = counts.actionable();
     let done_baseline = counts.done;
     let failed_baseline = counts.failed;
 
@@ -199,7 +200,7 @@ fn build_batches(project: &mut Project, settings: &TranslationSettings) -> (Vec<
                 continue;
             }
             if !item.is_translatable() {
-                item.status = ItemStatus::Done;
+                item.status = ItemStatus::Skipped;
                 continue;
             }
             let text = item.source_text();
@@ -322,7 +323,7 @@ async fn run(
                 {
                     let mut runtime = state.job_runtime(JobKind::Translate).await.lock_owned().await;
                     if let Some(counts) = counts {
-                        runtime.total = counts.total;
+                        runtime.total = counts.actionable();
                         runtime.done = counts.done;
                         runtime.failed = counts.failed;
                     }

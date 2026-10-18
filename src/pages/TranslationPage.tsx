@@ -209,7 +209,7 @@ export default function TranslationPage() {
   };
 
   const items = pageData?.items ?? [];
-  const percent = formatPercent(summary.doneCount, summary.itemCount);
+  const percent = formatPercent(summary.doneCount, summary.itemCount - summary.skippedCount);
 
   return (
     <>
@@ -306,6 +306,10 @@ export default function TranslationPage() {
                 label={`失败 ${formatNumber(summary.failedCount)}`}
               />
               <Chip variant="outlined" label={`待处理 ${formatNumber(summary.pendingCount)}`} />
+              <Chip
+                variant="outlined"
+                label={`无需翻译 ${formatNumber(summary.skippedCount)}`}
+              />
             </Box>
           }
         >
@@ -343,6 +347,7 @@ export default function TranslationPage() {
               <MenuItem value="pending">待处理</MenuItem>
               <MenuItem value="done">已完成</MenuItem>
               <MenuItem value="failed">失败</MenuItem>
+              <MenuItem value="skipped">无需翻译</MenuItem>
             </TextField>
             <Autocomplete
               options={summary.groups}
@@ -420,8 +425,12 @@ export default function TranslationPage() {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      {item.translation &&
-                      !(item.status === 'pending' && item.translation === item.original) ? (
+                      {item.status === 'skipped' ? (
+                        <Typography variant="caption" color="text.disabled">
+                          无需翻译
+                        </Typography>
+                      ) : item.translation &&
+                        !(item.status === 'pending' && item.translation === item.original) ? (
                         <Typography variant="body2" sx={clampSx} title={item.translation}>
                           {item.translation}
                         </Typography>

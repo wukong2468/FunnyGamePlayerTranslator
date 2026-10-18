@@ -71,6 +71,8 @@ pub struct ProjectSummary {
     pub done_count: usize,
     pub failed_count: usize,
     pub pending_count: usize,
+    /// 无需翻译的条目数（纯数字/符号/空条目）。
+    pub skipped_count: usize,
     pub glossary_count: usize,
     pub translated_glossary_count: usize,
     pub workspace_path: String,
@@ -276,6 +278,8 @@ impl AppState {
                 }
             }
         }
+        // 旧版本会把纯数字/符号条目记成已完成，这里统一修正为“无需翻译”
+        project.normalize_statuses();
 
         let glossary = match storage::read_json::<Glossary>(&workspace.join(GLOSSARY_FILE)) {
             Ok(Some(mut glossary)) => {
@@ -352,6 +356,64 @@ impl AppState {
             let mut runtime = self.jobs.runtime(JobKind::Glossary).lock_owned().await;
             runtime.restore(glossary_meta);
         }
+        self.recount_restored_jobs().await;
+    }
+
+    /// 恢复会话后按当前数据重新校准任务进度：
+    /// 失败数不再跨轮保留，无需翻译的单元也不计入进度。
+    async fn recount_restored_jobs(&self) {
+        let (counts, glossary_total, glossary_done) = {
+            let guard = self.session.read().await;
+            let Some(session) = guard.as_ref() else {
+                return;
+            };
+            let counts = session.project.status_counts();
+            let completed: std::collections::HashSet<&str> = session
+                .progress
+                .completed_groups
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let mut total = 0usize;
+            let mut done = 0usize;
+            for group in &session.project.groups {
+                if !group.items.iter().any(|item| item.is_translatable()) {
+                    continue;
+                }
+                total += 1;
+                if completed.contains(group.id.as_str()) {
+                    done += 1;
+                }
+            }
+            (counts, total, done)
+        };
+
+        {
+            let mut runtime = self.jobs.runtime(JobKind::Translate).lock_owned().await;
+            if runtime.phase != JobPhase::Idle {
+                runtime.total = counts.actionable();
+                runtime.done = counts.done;
+                runtime.failed = counts.failed;
+                runtime.message = format!(
+                    "已完成 {} 条，{} 条待翻译",
+                    runtime.done,
+                    runtime.total.saturating_sub(runtime.done)
+                );
+            }
+        }
+        {
+            let mut runtime = self.jobs.runtime(JobKind::Glossary).lock_owned().await;
+            if runtime.phase != JobPhase::Idle {
+                runtime.total = glossary_total;
+                runtime.done = glossary_done;
+                runtime.failed = 0;
+                runtime.message = format!(
+                    "已完成 {} 个分组，{} 个分组待收集",
+                    runtime.done,
+                    runtime.total.saturating_sub(runtime.done)
+                );
+            }
+        }
     }
 
     pub async fn summary(&self) -> Result<ProjectSummary> {
@@ -373,6 +435,7 @@ impl AppState {
             done_count: counts.done_count,
             failed_count: counts.failed_count,
             pending_count: counts.pending_count,
+            skipped_count: counts.skipped_count,
             glossary_count: session.glossary.terms.len(),
             translated_glossary_count: session.glossary.translated_count(),
             workspace_path: session.workspace.display().to_string(),

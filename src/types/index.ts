@@ -6,7 +6,7 @@ export type BackoffStrategy = 'none' | 'linear' | 'exponential';
 export type GlossaryInjection = 'off' | 'matched' | 'matchedWithNote';
 export type LongTextStrategy = 'skip' | 'isolate';
 
-export type ItemStatus = 'pending' | 'done' | 'failed';
+export type ItemStatus = 'pending' | 'done' | 'failed' | 'skipped';
 export type JobKind = 'glossary' | 'translate';
 export type JobPhase = 'idle' | 'running' | 'paused' | 'completed' | 'failed' | 'interrupted';
 export type Severity = 'success' | 'info' | 'warning' | 'error';
@@ -109,6 +109,8 @@ export interface ProjectSummary {
   doneCount: number;
   failedCount: number;
   pendingCount: number;
+  /** 无需翻译的条目数（纯数字、符号或空条目）。 */
+  skippedCount: number;
   glossaryCount: number;
   translatedGlossaryCount: number;
   workspacePath: string;
@@ -162,6 +164,7 @@ export interface ItemPage {
   done: number;
   failed: number;
   pending: number;
+  skipped: number;
 }
 
 export interface GlossaryTerm {
@@ -315,6 +318,7 @@ export const STATUS_LABELS: Record<ItemStatus, string> = {
   pending: '待处理',
   done: '已完成',
   failed: '失败',
+  skipped: '无需翻译',
 };
 
 export const PHASE_LABELS: Record<JobPhase, string> = {
