@@ -53,6 +53,9 @@ export function PageHeader({ title, description, icon, actions }: PageHeaderProp
             flexWrap: 'wrap',
             flexShrink: 0,
             maxWidth: '100%',
+            // 相对标题区垂直居中，并始终靠右（换行时也贴右边）
+            alignSelf: 'center',
+            ml: 'auto',
             '& .MuiButton-root': { flexShrink: 0, whiteSpace: 'nowrap' },
           }}
         >
