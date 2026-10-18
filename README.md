@@ -1,4 +1,4 @@
-# FunnyGamePlayer 汉化文本工具
+# FunnyGamePlayer 文本翻译工具
 
 基于 **Tauri 2 + Rust + React 19 + TypeScript + Material UI** 的游戏文本汉化工具。
 

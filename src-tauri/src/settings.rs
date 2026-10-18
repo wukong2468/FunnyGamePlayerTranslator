@@ -1,0 +1,360 @@
+//! 全局设置模型、校验与脱敏视图。
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    System,
+}
+
+impl Default for ThemeMode {
+    fn default() -> Self {
+        Self::System
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    Comfortable,
+    Compact,
+}
+
+impl Default for Density {
+    fn default() -> Self {
+        Self::Comfortable
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackoffStrategy {
+    None,
+    Linear,
+    Exponential,
+}
+
+impl Default for BackoffStrategy {
+    fn default() -> Self {
+        Self::Exponential
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GlossaryInjection {
+    /// 不注入术语
+    Off,
+    /// 仅注入本批次原文命中的术语
+    Matched,
+    /// 注入命中的术语，并附带分类备注
+    MatchedWithNote,
+}
+
+impl Default for GlossaryInjection {
+    fn default() -> Self {
+        Self::Matched
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LongTextStrategy {
+    /// 超过上限 6 倍的文本直接跳过并标记失败
+    Skip,
+    /// 超过上限 6 倍的文本单独成批翻译
+    Isolate,
+}
+
+impl Default for LongTextStrategy {
+    fn default() -> Self {
+        Self::Skip
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppearanceSettings {
+    pub theme_mode: ThemeMode,
+    pub primary_color: String,
+    pub density: Density,
+    pub font_family: String,
+    pub font_size: f32,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            theme_mode: ThemeMode::System,
+            primary_color: "#3B82F6".to_string(),
+            density: Density::Comfortable,
+            font_family: "system".to_string(),
+            font_size: 14.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ApiSettings {
+    pub base_url: String,
+    /// 仅存在于后端与本地设置文件，不通过命令返回给前端。
+    pub api_key: String,
+    pub model: String,
+    pub temperature: f32,
+    pub timeout_secs: u64,
+    pub json_mode: bool,
+}
+
+impl Default for ApiSettings {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: String::new(),
+            model: "gpt-4o-mini".to_string(),
+            temperature: 0.3,
+            timeout_secs: 120,
+            json_mode: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TranslationSettings {
+    pub concurrency: usize,
+    pub max_chars_per_batch: usize,
+    pub max_items_per_batch: usize,
+    pub retry_times: usize,
+    pub backoff_strategy: BackoffStrategy,
+    pub backoff_ms: u64,
+    pub glossary_injection: GlossaryInjection,
+    pub system_prompt: String,
+    pub user_prompt: String,
+    pub long_text_strategy: LongTextStrategy,
+    pub continue_on_batch_error: bool,
+    pub glossary_batch_chars: usize,
+    pub glossary_batch_items: usize,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        Self {
+            concurrency: 3,
+            max_chars_per_batch: 1200,
+            max_items_per_batch: 20,
+            retry_times: 2,
+            backoff_strategy: BackoffStrategy::Exponential,
+            backoff_ms: 1500,
+            glossary_injection: GlossaryInjection::Matched,
+            system_prompt: String::new(),
+            user_prompt: String::new(),
+            long_text_strategy: LongTextStrategy::Skip,
+            continue_on_batch_error: true,
+            glossary_batch_chars: 2000,
+            glossary_batch_items: 40,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Settings {
+    pub appearance: AppearanceSettings,
+    pub api: ApiSettings,
+    pub translation: TranslationSettings,
+}
+
+/// 返回给前端的 API 配置（不含明文密钥）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiSettingsView {
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f32,
+    pub timeout_secs: u64,
+    pub json_mode: bool,
+    pub has_api_key: bool,
+    pub api_key_masked: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub appearance: AppearanceSettings,
+    pub api: ApiSettingsView,
+    pub translation: TranslationSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ApiSettingsInput {
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f32,
+    pub timeout_secs: u64,
+    pub json_mode: bool,
+    /// 为空表示保留已保存的密钥。
+    pub api_key: Option<String>,
+    pub clear_api_key: bool,
+}
+
+impl Default for ApiSettingsInput {
+    fn default() -> Self {
+        let defaults = ApiSettings::default();
+        Self {
+            base_url: defaults.base_url,
+            model: defaults.model,
+            temperature: defaults.temperature,
+            timeout_secs: defaults.timeout_secs,
+            json_mode: defaults.json_mode,
+            api_key: None,
+            clear_api_key: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SettingsInput {
+    pub appearance: AppearanceSettings,
+    pub api: ApiSettingsInput,
+    pub translation: TranslationSettings,
+}
+
+impl Default for SettingsInput {
+    fn default() -> Self {
+        Self {
+            appearance: AppearanceSettings::default(),
+            api: ApiSettingsInput::default(),
+            translation: TranslationSettings::default(),
+        }
+    }
+}
+
+impl Settings {
+    pub fn view(&self) -> SettingsView {
+        SettingsView {
+            appearance: self.appearance.clone(),
+            api: ApiSettingsView {
+                base_url: self.api.base_url.clone(),
+                model: self.api.model.clone(),
+                temperature: self.api.temperature,
+                timeout_secs: self.api.timeout_secs,
+                json_mode: self.api.json_mode,
+                has_api_key: !self.api.api_key.trim().is_empty(),
+                api_key_masked: mask_key(&self.api.api_key),
+            },
+            translation: self.translation.clone(),
+        }
+    }
+
+    /// 应用前端提交的设置并执行校验。
+    pub fn apply(&mut self, input: SettingsInput) -> anyhow::Result<()> {
+        let next = Settings {
+            appearance: input.appearance,
+            api: ApiSettings {
+                base_url: input.api.base_url.trim().to_string(),
+                api_key: match (input.api.clear_api_key, input.api.api_key) {
+                    (true, _) => String::new(),
+                    (false, Some(key)) if !key.trim().is_empty() => key.trim().to_string(),
+                    _ => self.api.api_key.clone(),
+                },
+                model: input.api.model.trim().to_string(),
+                temperature: input.api.temperature,
+                timeout_secs: input.api.timeout_secs,
+                json_mode: input.api.json_mode,
+            },
+            translation: input.translation,
+        };
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let appearance = &self.appearance;
+        if !is_hex_color(&appearance.primary_color) {
+            anyhow::bail!("primaryColor: 主题色必须是 #RRGGBB 格式");
+        }
+        if !(12.0..=20.0).contains(&appearance.font_size) {
+            anyhow::bail!("fontSize: 字号需在 12 - 20 之间");
+        }
+        if appearance.font_family.trim().is_empty() {
+            anyhow::bail!("fontFamily: 字体不能为空");
+        }
+
+        let api = &self.api;
+        let url = api.base_url.trim();
+        if url.is_empty() {
+            anyhow::bail!("baseUrl: API 地址不能为空");
+        }
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            anyhow::bail!("baseUrl: API 地址必须以 http:// 或 https:// 开头");
+        }
+        if url.parse::<reqwest::Url>().is_err() {
+            anyhow::bail!("baseUrl: API 地址格式无效");
+        }
+        if api.model.trim().is_empty() {
+            anyhow::bail!("model: 模型名称不能为空");
+        }
+        if !(0.0..=2.0).contains(&api.temperature) {
+            anyhow::bail!("temperature: Temperature 需在 0 - 2 之间");
+        }
+        if !(10..=600).contains(&api.timeout_secs) {
+            anyhow::bail!("timeoutSecs: 请求超时需在 10 - 600 秒之间");
+        }
+
+        let translation = &self.translation;
+        if !(1..=16).contains(&translation.concurrency) {
+            anyhow::bail!("concurrency: 最大并发数需在 1 - 16 之间");
+        }
+        if !(200..=20000).contains(&translation.max_chars_per_batch) {
+            anyhow::bail!("maxCharsPerBatch: 单批字符上限需在 200 - 20000 之间");
+        }
+        if !(1..=200).contains(&translation.max_items_per_batch) {
+            anyhow::bail!("maxItemsPerBatch: 单批条目上限需在 1 - 200 之间");
+        }
+        if translation.retry_times > 10 {
+            anyhow::bail!("retryTimes: 失败重试次数不能超过 10");
+        }
+        if translation.backoff_ms > 60_000 {
+            anyhow::bail!("backoffMs: 重试间隔不能超过 60000 毫秒");
+        }
+        if !(200..=20000).contains(&translation.glossary_batch_chars) {
+            anyhow::bail!("glossaryBatchChars: 术语收集单批字符上限需在 200 - 20000 之间");
+        }
+        if !(1..=200).contains(&translation.glossary_batch_items) {
+            anyhow::bail!("glossaryBatchItems: 术语收集单批条目上限需在 1 - 200 之间");
+        }
+        if translation.system_prompt.chars().count() > 8000 {
+            anyhow::bail!("systemPrompt: 额外系统提示词不能超过 8000 字");
+        }
+        if translation.user_prompt.chars().count() > 8000 {
+            anyhow::bail!("userPrompt: 额外用户提示词不能超过 8000 字");
+        }
+        Ok(())
+    }
+}
+
+/// 密钥脱敏：仅保留末尾 4 位。
+pub fn mask_key(key: &str) -> String {
+    let key = key.trim();
+    if key.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() <= 8 {
+        return "••••••••".to_string();
+    }
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("••••••••{tail}")
+}
+
+fn is_hex_color(value: &str) -> bool {
+    let bytes = value.trim().as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
+}

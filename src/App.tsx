@@ -1,51 +1,54 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { Alert, Box, CircularProgress, CssBaseline, Typography, useMediaQuery } from '@mui/material';
+import { ThemeProvider } from '@mui/material/styles';
+import { useEffect, useMemo } from 'react';
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+import { AppShell } from '@/components/layout/AppShell';
+import { useAppStore } from '@/store/useAppStore';
+import { createAppTheme } from '@/theme';
+import { DEFAULT_APPEARANCE } from '@/types';
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+export default function App() {
+  const ready = useAppStore((state) => state.ready);
+  const fatalError = useAppStore((state) => state.fatalError);
+  const settings = useAppStore((state) => state.settings);
+  const bootstrap = useAppStore((state) => state.bootstrap);
+
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const appearance = settings?.appearance ?? DEFAULT_APPEARANCE;
+  const theme = useMemo(() => createAppTheme(appearance, prefersDark), [appearance, prefersDark]);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      {!ready && (
+        <Box
+          sx={{
+            height: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <CircularProgress />
+          <Typography variant="body2" color="text.secondary">
+            正在初始化工作区…
+          </Typography>
+        </Box>
+      )}
+      {ready && fatalError && (
+        <Box sx={{ maxWidth: 640, mx: 'auto', mt: 8, px: 3 }}>
+          <Alert severity="error">
+            应用初始化失败，请检查数据目录权限后重启：{fatalError}
+          </Alert>
+        </Box>
+      )}
+      {ready && !fatalError && <AppShell />}
+    </ThemeProvider>
   );
 }
-
-export default App;

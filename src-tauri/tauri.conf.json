@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "funnygameplayertranslator",
-  "version": "0.1.0",
-  "identifier": "com.administrator.funnygameplayertranslator",
+  "productName": "FunnyGamePlayerTranslator",
+  "version": "1.0.0",
+  "identifier": "com.funnygameplayer.translator",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "funnygameplayertranslator",
-        "width": 800,
-        "height": 600
+        "title": "FunnyGamePlayer 文本翻译工具",
+        "width": 1380,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "center": true
       }
     ],
     "security": {
