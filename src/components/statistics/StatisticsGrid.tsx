@@ -35,7 +35,7 @@ function StatCard({ item }: { item: StatItem }) {
             bgcolor: color === 'default' ? 'action.hover' : `${color}.main`,
             color: color === 'default' ? 'text.secondary' : '#fff',
             opacity: color === 'default' ? 1 : 0.9,
-            '& svg': { fontSize: 19 },
+            '& svg': { fontSize: '1.2rem' },
           }}
         >
           {item.icon}

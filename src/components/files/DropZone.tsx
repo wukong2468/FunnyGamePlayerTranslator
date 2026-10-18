@@ -35,7 +35,7 @@ export function DropZone({ active, disabled = false, onPick }: DropZoneProps) {
           color: active ? 'primary.contrastText' : 'text.secondary',
         }}
       >
-        <UploadFileIcon sx={{ fontSize: 28 }} />
+        <UploadFileIcon sx={{ fontSize: '1.75rem' }} />
       </Box>
       <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
         {active ? '松开即可导入文件' : '将 FunnyGameTranslations.json 拖到此处'}

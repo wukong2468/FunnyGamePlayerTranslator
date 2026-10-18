@@ -57,7 +57,7 @@ export function ItemEditDialog({ open, item, saving, onClose, onSave }: ItemEdit
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 fontFamily: MONO_FONT_STACK,
-                fontSize: 12.5,
+                fontSize: '0.78rem',
                 lineHeight: 1.65,
               }}
             >

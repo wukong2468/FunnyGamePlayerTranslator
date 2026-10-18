@@ -83,7 +83,7 @@ export function LogPanel({ logs, onClear, maxHeight = 220 }: LogPanelProps) {
           height: maxHeight,
           overflowY: 'auto',
           fontFamily: MONO_FONT_STACK,
-          fontSize: 12,
+          fontSize: '0.75rem',
           lineHeight: 1.65,
         }}
       >

@@ -25,6 +25,8 @@ export function createAppTheme(appearance: AppearanceSettings, systemPrefersDark
       : appearance.themeMode;
   const compact = appearance.density === 'compact';
   const fontFamily = FONT_STACKS[appearance.fontFamily] ?? FONT_STACKS.system;
+  // 字号以 14 为基准缩放根节点 font-size，所有用 rem 定义的文字（含 MUI 内部样式）统一跟随
+  const fontScale = appearance.fontSize / 14;
 
   return createTheme({
     cssVariables: true,
@@ -33,7 +35,8 @@ export function createAppTheme(appearance: AppearanceSettings, systemPrefersDark
     spacing: compact ? 7 : 8,
     typography: {
       fontFamily,
-      fontSize: appearance.fontSize,
+      // 固定为 14，避免 MUI 的 pxToRem 系数与根字号缩放叠加导致重复放大
+      fontSize: 14,
       h4: { fontSize: '1.65rem', fontWeight: 700 },
       h5: { fontSize: '1.35rem', fontWeight: 700 },
       h6: { fontSize: '1.08rem', fontWeight: 700 },
@@ -44,6 +47,6 @@ export function createAppTheme(appearance: AppearanceSettings, systemPrefersDark
       caption: { fontSize: '0.76rem' },
       button: { fontSize: '0.86rem', fontWeight: 600, textTransform: 'none' },
     },
-    components: buildComponents({ compact }),
+    components: buildComponents({ compact, fontScale }),
   });
 }

@@ -2,16 +2,20 @@ import { alpha, type Components, type Theme } from '@mui/material/styles';
 
 interface ComponentOptions {
   compact: boolean;
+  /** 相对 14px 基准的字号缩放比例。 */
+  fontScale: number;
 }
 
 /** 统一的组件主题覆盖：尺寸、圆角、表格密度与交互状态。 */
-export function buildComponents({ compact }: ComponentOptions): Components<Theme> {
+export function buildComponents({ compact, fontScale }: ComponentOptions): Components<Theme> {
   const controlHeight = compact ? 32 : 38;
+  // 根节点字号：所有 rem 文字统一按此比例缩放
+  const rootFontSize = `${16 * fontScale}px`;
 
   return {
     MuiCssBaseline: {
       styleOverrides: {
-        html: { height: '100%' },
+        html: { height: '100%', fontSize: rootFontSize },
         body: {
           height: '100%',
           margin: 0,
@@ -116,12 +120,15 @@ export function buildComponents({ compact }: ComponentOptions): Components<Theme
       defaultProps: { size: 'small' },
       styleOverrides: {
         root: { fontWeight: 500, borderRadius: 6 },
+        // 高度用 rem，跟随字号缩放，避免大字号时文字被裁切
+        sizeSmall: { height: '1.5rem', fontSize: '0.8125rem' },
+        sizeMedium: { height: '2rem', fontSize: '0.8125rem' },
       },
     },
     MuiTooltip: {
       defaultProps: { arrow: true, enterDelay: 350 },
       styleOverrides: {
-        tooltip: { fontSize: 12, borderRadius: 6 },
+        tooltip: { fontSize: '0.75rem', borderRadius: 6 },
       },
     },
     MuiTabs: {
@@ -147,7 +154,7 @@ export function buildComponents({ compact }: ComponentOptions): Components<Theme
     },
     MuiDialogTitle: {
       styleOverrides: {
-        root: { fontSize: 17, fontWeight: 700, paddingBottom: 4 },
+        root: { fontSize: '1.0625rem', fontWeight: 700, paddingBottom: 4 },
       },
     },
     MuiDialogActions: {
@@ -180,7 +187,7 @@ export function buildComponents({ compact }: ComponentOptions): Components<Theme
     },
     MuiListItemText: {
       styleOverrides: {
-        primary: { fontSize: 14, fontWeight: 500 },
+        primary: { fontSize: '0.875rem', fontWeight: 500 },
       },
     },
     MuiAlert: {
@@ -209,8 +216,8 @@ export function buildComponents({ compact }: ComponentOptions): Components<Theme
     MuiTablePagination: {
       styleOverrides: {
         toolbar: { minHeight: compact ? 44 : 52 },
-        selectLabel: { fontSize: 13 },
-        displayedRows: { fontSize: 13 },
+        selectLabel: { fontSize: '0.8125rem' },
+        displayedRows: { fontSize: '0.8125rem' },
       },
     },
     MuiMenu: {

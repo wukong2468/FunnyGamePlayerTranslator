@@ -24,7 +24,7 @@ export function EmptyState({ icon, title, description, action, compact = false }
         color: 'text.secondary',
       }}
     >
-      {icon && <Box sx={{ fontSize: 40, lineHeight: 1, opacity: 0.7 }}>{icon}</Box>}
+      {icon && <Box sx={{ fontSize: '2.5rem', lineHeight: 1, opacity: 0.7 }}>{icon}</Box>}
       <Typography variant="subtitle1" color="text.primary">
         {title}
       </Typography>

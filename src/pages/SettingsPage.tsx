@@ -491,7 +491,7 @@ export default function SettingsPage() {
                     bgcolor: 'action.hover',
                     borderRadius: 1,
                     fontFamily: MONO_FONT_STACK,
-                    fontSize: 12,
+                    fontSize: '0.75rem',
                   }}
                 >
                   [信息] 批次 dataActors#0 完成：12 条，注入术语 3 个
