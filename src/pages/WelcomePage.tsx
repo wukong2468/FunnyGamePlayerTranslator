@@ -32,7 +32,7 @@ const STEPS = [
   { title: '导入源文件', text: '解析分组、条目与现有译文' },
   { title: '收集术语', text: '并发抽取人名、地名与道具名' },
   { title: '批量翻译', text: '按批次注入术语并校验结果' },
-  { title: '导出回填', text: '保持源文件结构，直接替换游戏数据' },
+  { title: '导出回填', text: '保持源文件结构，直接替换数据' },
 ];
 
 export default function WelcomePage() {

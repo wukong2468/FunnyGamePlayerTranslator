@@ -51,18 +51,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { route: 'welcome', label: '欢迎 / 打开文件', icon: <HomeOutlinedIcon />, requiresProject: false },
+  { route: 'welcome', label: '首页', icon: <HomeOutlinedIcon />, requiresProject: false },
   { route: 'config', label: '翻译配置', icon: <TuneOutlinedIcon />, requiresProject: true },
-  { route: 'glossary', label: '术语表收集', icon: <MenuBookOutlinedIcon />, requiresProject: true },
-  { route: 'translate', label: '翻译任务', icon: <TranslateIcon />, requiresProject: true },
+  { route: 'glossary', label: '收集术语表', icon: <MenuBookOutlinedIcon />, requiresProject: true },
+  { route: 'translate', label: '翻译文本', icon: <TranslateIcon />, requiresProject: true },
 ];
 
 const PAGE_TITLES: Record<Route, string> = {
-  welcome: '欢迎使用',
-  config: '翻译配置',
-  glossary: '术语表收集',
-  translate: '翻译任务',
-  settings: '全局设置',
+  welcome: "欢迎使用",
+  config: "翻译配置",
+  glossary: "收集术语表",
+  translate: "翻译文本",
+  settings: "全局设置",
 };
 
 export function AppShell() {
