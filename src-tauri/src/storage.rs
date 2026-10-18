@@ -62,6 +62,25 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T, pretty: bool) -> 
     write_bytes_atomic(path, &bytes)
 }
 
+/// 以 4 空格缩进序列化 JSON，用于导出给用户查看的文件。
+pub fn to_vec_indent4<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    {
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+        let mut serializer = serde_json::Serializer::with_formatter(&mut buffer, formatter);
+        value
+            .serialize(&mut serializer)
+            .context("序列化 JSON 失败")?;
+    }
+    Ok(buffer)
+}
+
+/// 以 4 空格缩进原子写入导出的 JSON 文件。
+pub fn write_json_atomic_indent4<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let bytes = to_vec_indent4(value)?;
+    write_bytes_atomic(path, &bytes)
+}
+
 fn temp_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
@@ -90,4 +109,19 @@ pub fn workspace_dir_name(source_path: &str) -> String {
         .take(60)
         .collect();
     format!("{safe}-{}", path_hash(source_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indent4_serializes_multiline_with_four_spaces() {
+        let value = serde_json::json!({ "a": [1, { "b": 2 }] });
+        let text = String::from_utf8(to_vec_indent4(&value).unwrap()).unwrap();
+        assert_eq!(
+            text,
+            "{\n    \"a\": [\n        1,\n        {\n            \"b\": 2\n        }\n    ]\n}"
+        );
+    }
 }

@@ -105,6 +105,12 @@ const numberValue = (value: string, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/** 秒数 → 输入框文本：去掉多余的小数 0（120 → "120"，1.5 → "1.5"）。 */
+const secondsText = (value: number): string => `${Number(value.toFixed(3))}`;
+
+/** 毫秒 → 秒文本。 */
+const msToSecondsText = (ms: number): string => `${Number((ms / 1000).toFixed(3))}`;
+
 function FieldGrid({ children }: { children: ReactNode }) {
   return (
     <Box
@@ -137,6 +143,9 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
   const [clearApiKey, setClearApiKey] = useState(false);
   const [appearanceDirty, setAppearanceDirty] = useState(false);
+  // 支持小数的秒输入需要保留原始文本，否则输入 "1." 时会被数字回写吃掉小数点
+  const [timeoutText, setTimeoutText] = useState('120');
+  const [backoffText, setBackoffText] = useState('1.5');
 
   const initialised = useRef(false);
   const savedAppearance = useRef('');
@@ -145,14 +154,20 @@ export default function SettingsPage() {
     if (!settings) {
       return;
     }
+    const syncSeconds = () => {
+      setTimeoutText(secondsText(settings.api.timeoutSecs));
+      setBackoffText(msToSecondsText(settings.translation.backoffMs));
+    };
     if (!initialised.current) {
       initialised.current = true;
       savedAppearance.current = JSON.stringify(settings.appearance);
       setDraft(buildDraft(settings));
+      syncSeconds();
       return;
     }
     if (!dirty) {
       setDraft(buildDraft(settings));
+      syncSeconds();
     }
   }, [settings, dirty]);
 
@@ -576,14 +591,27 @@ export default function SettingsPage() {
                 />
                 <TextField
                   label="请求超时（秒）"
-                  type="number"
-                  value={draft.api.timeoutSecs}
-                  onChange={(event) =>
-                    patchApi({ timeoutSecs: numberValue(event.target.value) })
-                  }
+                  type="text"
+                  value={timeoutText}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setTimeoutText(text);
+                    const parsed = Number(text);
+                    patchApi({
+                      timeoutSecs: text.trim() === '' || !Number.isFinite(parsed) ? 0 : parsed,
+                    });
+                  }}
+                  onBlur={() => {
+                    const parsed = Number(timeoutText);
+                    if (timeoutText.trim() !== '' && Number.isFinite(parsed)) {
+                      setTimeoutText(secondsText(parsed));
+                    }
+                  }}
                   error={Boolean(errorOf('timeoutSecs'))}
-                  helperText={errorOf('timeoutSecs') || '超时后会按重试策略重新请求'}
-                  slotProps={{ htmlInput: { min: 10, max: 600, step: 10 } }}
+                  helperText={
+                    errorOf('timeoutSecs') || '支持小数，范围 1 - 600 秒；超时后按重试策略重新请求'
+                  }
+                  slotProps={{ htmlInput: { inputMode: 'decimal' } }}
                 />
               </FieldGrid>
 
@@ -671,8 +699,8 @@ export default function SettingsPage() {
                   patchTranslation({ concurrency: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('concurrency'))}
-                helperText={errorOf('concurrency') || '建议 2 - 4；过高可能触发接口限流'}
-                slotProps={{ htmlInput: { min: 1, max: 16 } }}
+                helperText={errorOf('concurrency') || '范围 1 - 500，默认 10；过高可能触发接口限流'}
+                slotProps={{ htmlInput: { min: 1, max: 500 } }}
               />
               <TextField
                 label="失败重试次数"
@@ -682,8 +710,8 @@ export default function SettingsPage() {
                   patchTranslation({ retryTimes: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('retryTimes'))}
-                helperText={errorOf('retryTimes') || '网络错误、超时、限流与解析失败会自动重试'}
-                slotProps={{ htmlInput: { min: 0, max: 10 } }}
+                helperText={errorOf('retryTimes') || '范围 0 - 100；网络错误、超时、限流与解析失败会自动重试'}
+                slotProps={{ htmlInput: { min: 0, max: 100 } }}
               />
               <TextField
                 label="单批字符上限"
@@ -693,8 +721,8 @@ export default function SettingsPage() {
                   patchTranslation({ maxCharsPerBatch: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('maxCharsPerBatch'))}
-                helperText={errorOf('maxCharsPerBatch') || '默认 1200，超长文本按 6 倍上限判定'}
-                slotProps={{ htmlInput: { min: 200, max: 20000, step: 100 } }}
+                helperText={errorOf('maxCharsPerBatch') || '范围 100 - 100000，默认 4000；超长文本按 6 倍上限判定'}
+                slotProps={{ htmlInput: { min: 100, max: 100000, step: 100 } }}
               />
               <TextField
                 label="单批条目上限"
@@ -704,8 +732,8 @@ export default function SettingsPage() {
                   patchTranslation({ maxItemsPerBatch: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('maxItemsPerBatch'))}
-                helperText={errorOf('maxItemsPerBatch') || '默认 20，条目越多单次耗时越长'}
-                slotProps={{ htmlInput: { min: 1, max: 200 } }}
+                helperText={errorOf('maxItemsPerBatch') || '范围 1 - 1000，默认 40；条目越多单次耗时越长'}
+                slotProps={{ htmlInput: { min: 1, max: 1000 } }}
               />
             </FieldGrid>
           </SectionCard>
@@ -727,16 +755,33 @@ export default function SettingsPage() {
                 <MenuItem value="exponential">指数递增</MenuItem>
               </TextField>
               <TextField
-                label="重试基础间隔（毫秒）"
-                type="number"
-                value={draft.translation.backoffMs}
-                onChange={(event) =>
-                  patchTranslation({ backoffMs: numberValue(event.target.value) })
-                }
+                label="重试基础间隔（秒）"
+                type="text"
+                value={backoffText}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  setBackoffText(text);
+                  const parsed = Number(text);
+                  patchTranslation({
+                    backoffMs:
+                      text.trim() === '' || !Number.isFinite(parsed)
+                        ? 0
+                        : Math.round(parsed * 1000),
+                  });
+                }}
+                onBlur={() => {
+                  const parsed = Number(backoffText);
+                  if (Number.isFinite(parsed)) {
+                    setBackoffText(msToSecondsText(Math.round(parsed * 1000)));
+                  }
+                }}
                 error={Boolean(errorOf('backoffMs'))}
-                helperText={errorOf('backoffMs') || '指数策略下按 1x / 2x / 4x 递增，最长 120 秒'}
+                helperText={
+                  errorOf('backoffMs') ||
+                  '支持小数，范围 0 - 300 秒；指数策略下按 1x / 2x / 4x 递增'
+                }
                 disabled={draft.translation.backoffStrategy === 'none'}
-                slotProps={{ htmlInput: { min: 0, max: 60000, step: 100 } }}
+                slotProps={{ htmlInput: { inputMode: 'decimal' } }}
               />
               <TextField
                 select
@@ -798,8 +843,8 @@ export default function SettingsPage() {
                   patchTranslation({ glossaryBatchChars: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('glossaryBatchChars'))}
-                helperText={errorOf('glossaryBatchChars')}
-                slotProps={{ htmlInput: { min: 200, max: 20000, step: 100 } }}
+                helperText={errorOf('glossaryBatchChars') || '范围 100 - 100000'}
+                slotProps={{ htmlInput: { min: 100, max: 100000, step: 100 } }}
               />
               <TextField
                 label="术语收集单批条目上限"
@@ -809,8 +854,8 @@ export default function SettingsPage() {
                   patchTranslation({ glossaryBatchItems: numberValue(event.target.value) })
                 }
                 error={Boolean(errorOf('glossaryBatchItems'))}
-                helperText={errorOf('glossaryBatchItems')}
-                slotProps={{ htmlInput: { min: 1, max: 200 } }}
+                helperText={errorOf('glossaryBatchItems') || '范围 1 - 1000'}
+                slotProps={{ htmlInput: { min: 1, max: 1000 } }}
               />
             </FieldGrid>
           </SectionCard>
@@ -825,7 +870,8 @@ export default function SettingsPage() {
                 minRows={3}
                 error={Boolean(errorOf('systemPrompt'))}
                 helperText={
-                  errorOf('systemPrompt') || '例如：本作角色多用关西腔，请保持轻松口语化表达'
+                  errorOf('systemPrompt') ||
+                  `${[...draft.translation.systemPrompt].length} / 10000 字符 · 例如：本作角色多用关西腔，请保持轻松口语化表达`
                 }
                 fullWidth
               />
@@ -836,7 +882,10 @@ export default function SettingsPage() {
                 multiline
                 minRows={2}
                 error={Boolean(errorOf('userPrompt'))}
-                helperText={errorOf('userPrompt') || '会随每次翻译请求发送，请勿写入敏感信息'}
+                helperText={
+                  errorOf('userPrompt') ||
+                  `${[...draft.translation.userPrompt].length} / 10000 字符 · 会随每次翻译请求发送，请勿写入敏感信息`
+                }
                 fullWidth
               />
               <Box>

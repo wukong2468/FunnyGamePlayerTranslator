@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ai::{client, prompt};
 use crate::glossary::{GlossaryTerm, MergeOutcome};
-use crate::settings::{ApiSettings, TranslationSettings};
+use crate::settings::{ApiSettings, MAX_CONCURRENCY, TranslationSettings};
 use crate::state::AppState;
 use crate::util::{char_len, ellipsis};
 
@@ -24,6 +24,7 @@ struct GroupPlan {
 }
 
 struct GroupOutcome {
+    id: String,
     ok: bool,
     interrupted: bool,
     added: usize,
@@ -48,7 +49,7 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         anyhow::bail!("请先在「全局设置 → AI 接口」中配置 API 地址与模型");
     }
 
-    let (plans, source_lang, target_lang, auto_completed) = {
+    let (plans, source_lang, target_lang, auto_completed, done_baseline, total_groups) = {
         let mut guard = state.session.write().await;
         let session = guard.as_mut().ok_or_else(|| anyhow::anyhow!("尚未打开项目"))?;
         if restart {
@@ -99,11 +100,16 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         if auto_completed > 0 {
             session.glossary_dirty = true;
         }
+
+        let done_baseline = session.progress.completed_groups.len();
+        let total_groups = session.project.groups.len();
         (
             plans,
             session.project.source_lang.clone(),
             session.project.target_lang.clone(),
             auto_completed,
+            done_baseline,
+            total_groups,
         )
     };
 
@@ -111,6 +117,10 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         let message = "所有分组均已完成术语收集".to_string();
         {
             let mut runtime = runtime_handle.lock().await;
+            runtime.total = total_groups;
+            runtime.done = total_groups;
+            runtime.failed = 0;
+            runtime.running = 0;
             runtime.log("info", message.clone());
         }
         state
@@ -119,7 +129,7 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let total_groups = plans.len();
+    let pending_groups = plans.len();
     let total_chunks: usize = plans.iter().map(|plan| plan.chunks.len()).sum();
     let token = {
         let mut runtime = runtime_handle.lock().await;
@@ -127,18 +137,49 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         if runtime.is_running() {
             anyhow::bail!("术语收集任务正在执行中，请先中断当前任务");
         }
-        let token = runtime.begin(
-            total_groups,
-            total_chunks,
-            &format!("准备收集 {total_groups} 个分组的术语"),
-        );
+        // 有历史进度时走“继续执行”：已完成的分组跳过，失败与未处理的分组重新排队
+        let resume_mode = !restart && runtime.phase != JobPhase::Idle;
+        let retry_groups = if resume_mode {
+            runtime.failed.min(pending_groups)
+        } else {
+            0
+        };
+        let token = if resume_mode {
+            runtime.resume(
+                total_groups,
+                done_baseline,
+                // 上次失败的分组本轮会重新执行，失败计数从 0 重新累积
+                0,
+                total_chunks,
+                &format!(
+                    "继续收集 {pending_groups} 个分组（其中 {retry_groups} 个为上次失败的重试）"
+                ),
+            )
+        } else {
+            let token = runtime.begin(
+                total_groups,
+                total_chunks,
+                &format!("准备收集 {pending_groups} 个分组的术语"),
+            );
+            // 没有可抽取文本的分组已经直接完成，计入已完成进度
+            runtime.done = done_baseline;
+            token
+        };
         runtime.log(
             "info",
             format!(
-                "任务开始：{total_groups} 个分组 / {total_chunks} 个请求，并发 {}",
+                "任务开始：{pending_groups} 个分组 / {total_chunks} 个请求，并发 {}",
                 settings.translation.concurrency
             ),
         );
+        if resume_mode {
+            runtime.log(
+                "info",
+                format!(
+                    "继续执行：跳过 {done_baseline} 个已完成分组，重新执行 {pending_groups} 个未完成分组（其中 {retry_groups} 个上次失败）"
+                ),
+            );
+        }
         if auto_completed > 0 {
             runtime.log(
                 "info",
@@ -167,7 +208,8 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
 }
 
 fn chunk_texts(texts: &[String], max_chars: usize, max_items: usize) -> Vec<Vec<String>> {
-    let limit = max_chars.max(200);
+    // 上限由设置校验保证（100 - 100000），这里只做防御性下限
+    let limit = max_chars.max(1);
     let max_items = max_items.max(1);
     let mut chunks: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<String> = Vec::new();
@@ -197,10 +239,12 @@ async fn run(
     target_lang: String,
     token: CancellationToken,
 ) {
-    let concurrency = settings.concurrency.clamp(1, 16);
+    let concurrency = settings.concurrency.clamp(1, MAX_CONCURRENCY);
     let mut set: JoinSet<GroupOutcome> = JoinSet::new();
     let mut pending = plans.into_iter();
     let aborting = false;
+    // 本轮失败的分组（失败计数只统计本轮，继续执行时会重新排队）
+    let mut failed_ids: HashSet<String> = HashSet::new();
     let mut terms_added = 0usize;
     let mut reported_running = usize::MAX;
     let mut last_checkpoint = std::time::Instant::now();
@@ -241,12 +285,15 @@ async fn run(
         match joined {
             Ok(outcome) => {
                 terms_added += outcome.added + outcome.updated;
+                // 每个分组一轮只计一次失败；继续执行时失败分组会重新排队
+                let newly_failed =
+                    !outcome.ok && !outcome.interrupted && failed_ids.insert(outcome.id.clone());
                 {
                     let mut runtime = state.job_runtime(JobKind::Glossary).await.lock_owned().await;
                     runtime.batch_done += outcome.chunks_done;
                     if outcome.ok {
                         runtime.done += 1;
-                    } else if !outcome.interrupted {
+                    } else if newly_failed {
                         runtime.failed += 1;
                     }
                     runtime.message = format!(
@@ -255,6 +302,16 @@ async fn run(
                     );
                     if let Some(error) = &outcome.error {
                         runtime.log("error", error.clone());
+                    }
+                }
+                // 记录已完成的分组，继续执行时据此跳过
+                if outcome.ok {
+                    let mut guard = state.session.write().await;
+                    if let Some(session) = guard.as_mut() {
+                        if !session.progress.completed_groups.contains(&outcome.id) {
+                            session.progress.completed_groups.push(outcome.id.clone());
+                        }
+                        session.glossary_dirty = true;
                     }
                 }
                 if last_checkpoint.elapsed().as_secs() >= 30 {
@@ -272,6 +329,11 @@ async fn run(
     let (phase, message) = {
         let mut runtime = state.job_runtime(JobKind::Glossary).await.lock_owned().await;
         let cancelled = token.is_cancelled();
+        if !cancelled {
+            // 本轮已覆盖全部未完成分组，失败集合就是最终结果
+            runtime.failed = failed_ids.len();
+            runtime.done = runtime.total.saturating_sub(runtime.failed);
+        }
         let (phase, message) = if cancelled {
             (
                 JobPhase::Paused,
@@ -323,6 +385,7 @@ async fn run_group(
     for chunk in &plan.chunks {
         if token.is_cancelled() {
             return GroupOutcome {
+                id: plan.id.clone(),
                 ok: false,
                 interrupted: true,
                 added,
@@ -369,6 +432,7 @@ async fn run_group(
             Err(message) => {
                 if token.is_cancelled() {
                     return GroupOutcome {
+                        id: plan.id.clone(),
                         ok: false,
                         interrupted: true,
                         added,
@@ -378,6 +442,7 @@ async fn run_group(
                     };
                 }
                 return GroupOutcome {
+                    id: plan.id.clone(),
                     ok: false,
                     interrupted: false,
                     added,
@@ -392,6 +457,7 @@ async fn run_group(
             Ok(value) => value,
             Err(err) => {
                 return GroupOutcome {
+                    id: plan.id.clone(),
                     ok: false,
                     interrupted: false,
                     added,
@@ -415,16 +481,6 @@ async fn run_group(
     }
 
     {
-        let mut guard = state.session.write().await;
-        if let Some(session) = guard.as_mut() {
-            if !session.progress.completed_groups.contains(&plan.id) {
-                session.progress.completed_groups.push(plan.id.clone());
-            }
-            session.glossary_dirty = true;
-        }
-    }
-
-    {
         let mut runtime = state.job_runtime(JobKind::Glossary).await.lock_owned().await;
         runtime.log(
             "info",
@@ -436,6 +492,7 @@ async fn run_group(
     }
 
     GroupOutcome {
+        id: plan.id,
         ok: true,
         interrupted: false,
         added,

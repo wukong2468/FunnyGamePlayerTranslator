@@ -202,7 +202,7 @@ export default function GlossaryPage() {
                 </Button>
               }
             >
-              有 {glossarySnapshot.failed} 个分组收集失败，继续执行只会重新处理未完成的分组。
+              有 {glossarySnapshot.failed} 个分组收集失败，继续执行会保留已完成进度，只重试失败分组与未处理分组。
             </Alert>
           )}
           <Box sx={{ mt: 2 }}>

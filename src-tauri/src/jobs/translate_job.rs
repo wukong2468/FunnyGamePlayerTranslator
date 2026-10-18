@@ -10,7 +10,9 @@ use tokio_util::sync::CancellationToken;
 use crate::ai::{client, prompt};
 use crate::glossary::GlossaryTerm;
 use crate::project::{ItemStatus, Project};
-use crate::settings::{ApiSettings, GlossaryInjection, LongTextStrategy, TranslationSettings};
+use crate::settings::{
+    ApiSettings, GlossaryInjection, LongTextStrategy, MAX_CONCURRENCY, TranslationSettings,
+};
 use crate::state::AppState;
 use crate::util::{char_len, ellipsis};
 
@@ -33,8 +35,6 @@ struct Entry {
 }
 
 struct BatchResult {
-    done: usize,
-    failed: usize,
     error: Option<String>,
 }
 
@@ -54,17 +54,21 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         anyhow::bail!("请先在「全局设置 → AI 接口」中配置 API 地址与模型");
     }
 
-    let (batches, queued_items, source_lang, target_lang, skipped) = {
+    let (batches, queued_items, source_lang, target_lang, skipped, counts, retry_items) = {
         let mut guard = state.session.write().await;
         let session = guard.as_mut().ok_or_else(|| anyhow::anyhow!("尚未打开项目"))?;
 
+        // 继续执行前记录失败条目数，仅用于提示“本轮会重试多少条”
+        let failed_before = session.project.status_counts().failed;
         if restart {
             session.project.prepare_restart();
         } else {
+            // 失败条目重新放回待处理队列：失败计数从 0 重新累积，进度回到真实位置
             session.project.reset_failed();
         }
         let (batches, skipped_items) = build_batches(&mut session.project, &settings.translation);
         let queued = batches.iter().map(|batch| batch.items.len()).sum::<usize>();
+        let counts = session.project.status_counts();
         session.project_dirty = true;
         session.updated_at = crate::util::now_iso();
         (
@@ -73,8 +77,14 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
             session.project.source_lang.clone(),
             session.project.target_lang.clone(),
             skipped_items,
+            counts,
+            if restart { 0 } else { failed_before },
         )
     };
+
+    let total_items = counts.total;
+    let done_baseline = counts.done;
+    let failed_baseline = counts.failed;
 
     if batches.is_empty() {
         let message = if skipped > 0 {
@@ -84,6 +94,11 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
         };
         {
             let mut runtime = runtime_handle.lock().await;
+            // 没有可执行批次时也把累计进度展示正确，避免清零
+            runtime.total = total_items;
+            runtime.done = done_baseline;
+            runtime.failed = failed_baseline;
+            runtime.running = 0;
             runtime.log("info", message.clone());
         }
         state
@@ -93,19 +108,34 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
     }
 
     let batch_total = batches.len();
-    let total_items = queued_items + skipped;
     let token = {
         let mut runtime = runtime_handle.lock().await;
         // 二次检查：避免并发触发时重复启动任务
         if runtime.is_running() {
             anyhow::bail!("翻译任务正在执行中，请先中断当前任务");
         }
-        let token = runtime.begin(
-            total_items,
-            batch_total,
-            &format!("准备翻译 {queued_items} 条文本（{batch_total} 个批次）"),
-        );
-        runtime.failed = skipped;
+        // 有历史进度时走“继续执行”，保留已完成/失败计数与日志
+        let resume_mode = !restart && runtime.phase != JobPhase::Idle;
+        let token = if resume_mode {
+            runtime.resume(
+                total_items,
+                done_baseline,
+                failed_baseline,
+                batch_total,
+                &format!(
+                    "继续翻译 {queued_items} 条文本（{batch_total} 个批次，其中 {retry_items} 条为上次失败的重试）"
+                ),
+            )
+        } else {
+            let token = runtime.begin(
+                total_items,
+                batch_total,
+                &format!("准备翻译 {queued_items} 条文本（{batch_total} 个批次）"),
+            );
+            runtime.done = done_baseline;
+            runtime.failed = failed_baseline;
+            token
+        };
         runtime.log(
             "info",
             format!(
@@ -115,6 +145,14 @@ pub async fn spawn(state: Arc<AppState>, restart: bool) -> anyhow::Result<()> {
                 settings.translation.max_items_per_batch
             ),
         );
+        if resume_mode {
+            runtime.log(
+                "info",
+                format!(
+                    "继续执行：跳过 {done_baseline} 条已完成条目，重试 {retry_items} 条失败条目"
+                ),
+            );
+        }
         if skipped > 0 {
             runtime.log(
                 "warn",
@@ -155,7 +193,9 @@ fn build_batches(project: &mut Project, settings: &TranslationSettings) -> (Vec<
     for (group_index, group) in project.groups.iter_mut().enumerate() {
         let group_id = group.id.clone();
         for (item_index, item) in group.items.iter_mut().enumerate() {
-            if item.status != ItemStatus::Pending {
+            // 待处理与失败条目都参与本轮：失败条目直接重试，
+            // 状态保持 Failed 直到重试成功，进度统计因此不会在开始时归零
+            if !matches!(item.status, ItemStatus::Pending | ItemStatus::Failed) {
                 continue;
             }
             if !item.is_translatable() {
@@ -229,7 +269,7 @@ async fn run(
     target_lang: String,
     token: CancellationToken,
 ) {
-    let concurrency = settings.concurrency.clamp(1, 16);
+    let concurrency = settings.concurrency.clamp(1, MAX_CONCURRENCY);
     let mut set: JoinSet<BatchResult> = JoinSet::new();
     let mut pending = batches.into_iter();
     let mut aborting = false;
@@ -273,10 +313,19 @@ async fn run(
 
         match joined {
             Ok(result) => {
+                // 进度直接按项目条目状态统计：已完成/失败条目不会被重复计数，
+                // 重试成功的条目会自然从失败数里移出
+                let counts = {
+                    let guard = state.session.read().await;
+                    guard.as_ref().map(|session| session.project.status_counts())
+                };
                 {
                     let mut runtime = state.job_runtime(JobKind::Translate).await.lock_owned().await;
-                    runtime.done += result.done;
-                    runtime.failed += result.failed;
+                    if let Some(counts) = counts {
+                        runtime.total = counts.total;
+                        runtime.done = counts.done;
+                        runtime.failed = counts.failed;
+                    }
                     runtime.batch_done += 1;
                     runtime.message = format!(
                         "已完成 {}/{} 条，失败 {} 条",
@@ -355,11 +404,7 @@ async fn execute_batch(
     token: CancellationToken,
 ) -> BatchResult {
     if token.is_cancelled() {
-        return BatchResult {
-            done: 0,
-            failed: 0,
-            error: None,
-        };
+        return BatchResult { error: None };
     }
 
     // 1. 读取批次原文，并按命中情况挑选术语
@@ -367,8 +412,6 @@ async fn execute_batch(
         let guard = state.session.read().await;
         let Some(session) = guard.as_ref() else {
             return BatchResult {
-                done: 0,
-                failed: 0,
                 error: Some("项目已关闭，批次取消".to_string()),
             };
         };
@@ -401,11 +444,7 @@ async fn execute_batch(
     };
 
     if entries.is_empty() {
-        return BatchResult {
-            done: 0,
-            failed: 0,
-            error: None,
-        };
+        return BatchResult { error: None };
     }
 
     // 2. 构建提示词
@@ -478,19 +517,11 @@ async fn execute_batch(
         Ok(content) => content,
         Err(message) => {
             if token.is_cancelled() {
-                return BatchResult {
-                    done: 0,
-                    failed: 0,
-                    error: None,
-                };
+                return BatchResult { error: None };
             }
             let reason = format!("批次 {} 失败：{}", batch.label, message);
-            let failed = fail_entries(&state, &entries, &reason).await;
-            return BatchResult {
-                done: 0,
-                failed,
-                error: Some(reason),
-            };
+            fail_entries(&state, &entries, &reason).await;
+            return BatchResult { error: Some(reason) };
         }
     };
 
@@ -499,12 +530,8 @@ async fn execute_batch(
         Ok(value) => value,
         Err(err) => {
             let reason = format!("批次 {} 返回内容无法解析：{}", batch.label, err.message);
-            let failed = fail_entries(&state, &entries, &reason).await;
-            return BatchResult {
-                done: 0,
-                failed,
-                error: Some(reason),
-            };
+            fail_entries(&state, &entries, &reason).await;
+            return BatchResult { error: Some(reason) };
         }
     };
 
@@ -516,8 +543,6 @@ async fn execute_batch(
         let mut guard = state.session.write().await;
         let Some(session) = guard.as_mut() else {
             return BatchResult {
-                done: 0,
-                failed: 0,
                 error: Some("项目已关闭，批次取消".to_string()),
             };
         };
@@ -569,19 +594,14 @@ async fn execute_batch(
         }
     }
 
-    BatchResult {
-        done,
-        failed,
-        error: None,
-    }
+    BatchResult { error: None }
 }
 
-async fn fail_entries(state: &Arc<AppState>, entries: &[Entry], reason: &str) -> usize {
+async fn fail_entries(state: &Arc<AppState>, entries: &[Entry], reason: &str) {
     let mut guard = state.session.write().await;
     let Some(session) = guard.as_mut() else {
-        return 0;
+        return;
     };
-    let mut failed = 0;
     for entry in entries {
         if let Some(item) = session.project.item_mut(entry.group, entry.item) {
             // 人工校对过的条目不因为批次失败而被覆盖状态
@@ -589,11 +609,9 @@ async fn fail_entries(state: &Arc<AppState>, entries: &[Entry], reason: &str) ->
                 continue;
             }
             item.mark_failed(reason, false);
-            failed += 1;
         }
     }
     session.project_dirty = true;
-    failed
 }
 
 fn collect_translations(value: &Value, output: &mut HashMap<String, String>) {

@@ -2,6 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 请求超时下限（秒）。
+pub const MIN_TIMEOUT_SECS: f64 = 1.0;
+/// 请求超时上限（秒）。
+pub const MAX_TIMEOUT_SECS: f64 = 600.0;
+/// 最大并发请求数。
+pub const MAX_CONCURRENCY: usize = 500;
+/// 单批字符数下限。
+pub const MIN_BATCH_CHARS: usize = 100;
+/// 单批字符数上限。
+pub const MAX_BATCH_CHARS: usize = 100_000;
+/// 单批条目数上限。
+pub const MAX_BATCH_ITEMS: usize = 1_000;
+/// 重试基础间隔上限（毫秒，即 300 秒）。
+pub const MAX_BACKOFF_MS: u64 = 300_000;
+/// 失败重试次数上限。
+pub const MAX_RETRY_TIMES: usize = 100;
+/// 额外提示词长度上限（字符）。
+pub const MAX_PROMPT_CHARS: usize = 10_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -105,7 +124,8 @@ pub struct ApiSettings {
     pub api_key: String,
     pub model: String,
     pub temperature: f32,
-    pub timeout_secs: u64,
+    /// 请求超时（秒），支持小数。
+    pub timeout_secs: f64,
     pub json_mode: bool,
 }
 
@@ -116,7 +136,7 @@ impl Default for ApiSettings {
             api_key: String::new(),
             model: "gpt-4o-mini".to_string(),
             temperature: 0.3,
-            timeout_secs: 120,
+            timeout_secs: 120.0,
             json_mode: true,
         }
     }
@@ -143,18 +163,18 @@ pub struct TranslationSettings {
 impl Default for TranslationSettings {
     fn default() -> Self {
         Self {
-            concurrency: 3,
-            max_chars_per_batch: 1200,
-            max_items_per_batch: 20,
-            retry_times: 2,
+            concurrency: 10,
+            max_chars_per_batch: 4000,
+            max_items_per_batch: 40,
+            retry_times: 3,
             backoff_strategy: BackoffStrategy::Exponential,
-            backoff_ms: 1500,
+            backoff_ms: 1000,
             glossary_injection: GlossaryInjection::Matched,
             system_prompt: String::new(),
             user_prompt: String::new(),
             long_text_strategy: LongTextStrategy::Skip,
             continue_on_batch_error: true,
-            glossary_batch_chars: 2000,
+            glossary_batch_chars: 4000,
             glossary_batch_items: 40,
         }
     }
@@ -175,7 +195,7 @@ pub struct ApiSettingsView {
     pub base_url: String,
     pub model: String,
     pub temperature: f32,
-    pub timeout_secs: u64,
+    pub timeout_secs: f64,
     pub json_mode: bool,
     pub has_api_key: bool,
     pub api_key_masked: String,
@@ -195,7 +215,7 @@ pub struct ApiSettingsInput {
     pub base_url: String,
     pub model: String,
     pub temperature: f32,
-    pub timeout_secs: u64,
+    pub timeout_secs: f64,
     pub json_mode: bool,
     /// 为空表示保留已保存的密钥。
     pub api_key: Option<String>,
@@ -304,37 +324,37 @@ impl Settings {
         if !(0.0..=2.0).contains(&api.temperature) {
             anyhow::bail!("temperature: Temperature 需在 0 - 2 之间");
         }
-        if !(10..=600).contains(&api.timeout_secs) {
-            anyhow::bail!("timeoutSecs: 请求超时需在 10 - 600 秒之间");
+        if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&api.timeout_secs) {
+            anyhow::bail!("timeoutSecs: 请求超时需在 1 - 600 秒之间");
         }
 
         let translation = &self.translation;
-        if !(1..=16).contains(&translation.concurrency) {
-            anyhow::bail!("concurrency: 最大并发数需在 1 - 16 之间");
+        if !(1..=MAX_CONCURRENCY).contains(&translation.concurrency) {
+            anyhow::bail!("concurrency: 并发数需在 1 - 500 之间");
         }
-        if !(200..=20000).contains(&translation.max_chars_per_batch) {
-            anyhow::bail!("maxCharsPerBatch: 单批字符上限需在 200 - 20000 之间");
+        if !(MIN_BATCH_CHARS..=MAX_BATCH_CHARS).contains(&translation.max_chars_per_batch) {
+            anyhow::bail!("maxCharsPerBatch: 单批字符上限需在 100 - 100000 之间");
         }
-        if !(1..=200).contains(&translation.max_items_per_batch) {
-            anyhow::bail!("maxItemsPerBatch: 单批条目上限需在 1 - 200 之间");
+        if !(1..=MAX_BATCH_ITEMS).contains(&translation.max_items_per_batch) {
+            anyhow::bail!("maxItemsPerBatch: 单批条目上限需在 1 - 1000 之间");
         }
-        if translation.retry_times > 10 {
-            anyhow::bail!("retryTimes: 失败重试次数不能超过 10");
+        if translation.retry_times > MAX_RETRY_TIMES {
+            anyhow::bail!("retryTimes: 失败重试次数需在 0 - 100 之间");
         }
-        if translation.backoff_ms > 60_000 {
-            anyhow::bail!("backoffMs: 重试间隔不能超过 60000 毫秒");
+        if translation.backoff_ms > MAX_BACKOFF_MS {
+            anyhow::bail!("backoffMs: 重试间隔需在 0 - 300 秒之间");
         }
-        if !(200..=20000).contains(&translation.glossary_batch_chars) {
-            anyhow::bail!("glossaryBatchChars: 术语收集单批字符上限需在 200 - 20000 之间");
+        if !(MIN_BATCH_CHARS..=MAX_BATCH_CHARS).contains(&translation.glossary_batch_chars) {
+            anyhow::bail!("glossaryBatchChars: 术语单批字符上限需在 100 - 100000 之间");
         }
-        if !(1..=200).contains(&translation.glossary_batch_items) {
-            anyhow::bail!("glossaryBatchItems: 术语收集单批条目上限需在 1 - 200 之间");
+        if !(1..=MAX_BATCH_ITEMS).contains(&translation.glossary_batch_items) {
+            anyhow::bail!("glossaryBatchItems: 术语单批条目上限需在 1 - 1000 之间");
         }
-        if translation.system_prompt.chars().count() > 8000 {
-            anyhow::bail!("systemPrompt: 额外系统提示词不能超过 8000 字");
+        if translation.system_prompt.chars().count() > MAX_PROMPT_CHARS {
+            anyhow::bail!("systemPrompt: 额外系统提示词不能超过 10000 字符");
         }
-        if translation.user_prompt.chars().count() > 8000 {
-            anyhow::bail!("userPrompt: 额外用户提示词不能超过 8000 字");
+        if translation.user_prompt.chars().count() > MAX_PROMPT_CHARS {
+            anyhow::bail!("userPrompt: 额外用户提示词不能超过 10000 字符");
         }
         Ok(())
     }

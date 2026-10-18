@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use crate::settings::ApiSettings;
+use crate::settings::{ApiSettings, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
 
 /// 统一的 AI 调用错误，区分是否可重试。
 #[derive(Debug, Clone)]
@@ -47,6 +47,15 @@ pub fn endpoint(base_url: &str) -> String {
     }
 }
 
+/// 生效的请求超时（秒）：支持小数，非法值回退默认并夹到 1 - 600 秒。
+fn timeout_secs(api: &ApiSettings) -> f64 {
+    if api.timeout_secs.is_finite() {
+        api.timeout_secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS)
+    } else {
+        120.0
+    }
+}
+
 /// 发起一次对话请求，返回模型输出的文本内容。
 pub async fn chat(
     http: &Client,
@@ -74,7 +83,7 @@ pub async fn chat(
 
     let mut request = http
         .post(endpoint(&api.base_url))
-        .timeout(Duration::from_secs(api.timeout_secs.max(10)))
+        .timeout(Duration::from_secs_f64(timeout_secs(&api)))
         .header("Content-Type", "application/json")
         .json(&body);
     let key = api.api_key.trim();

@@ -296,18 +296,18 @@ export const DEFAULT_API_INPUT = {
 };
 
 export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
-  concurrency: 3,
-  maxCharsPerBatch: 1200,
-  maxItemsPerBatch: 20,
-  retryTimes: 2,
+  concurrency: 10,
+  maxCharsPerBatch: 4000,
+  maxItemsPerBatch: 40,
+  retryTimes: 3,
   backoffStrategy: 'exponential',
-  backoffMs: 1500,
+  backoffMs: 1000,
   glossaryInjection: 'matched',
   systemPrompt: '',
   userPrompt: '',
   longTextStrategy: 'skip',
   continueOnBatchError: true,
-  glossaryBatchChars: 2000,
+  glossaryBatchChars: 4000,
   glossaryBatchItems: 40,
 };
 

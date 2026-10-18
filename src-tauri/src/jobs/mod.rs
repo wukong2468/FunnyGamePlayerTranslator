@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::project::JobMeta;
-use crate::settings::BackoffStrategy;
+use crate::settings::{BackoffStrategy, MAX_BACKOFF_MS};
 use crate::util::now_iso;
 
 const MAX_LOGS: usize = 400;
@@ -143,7 +143,7 @@ impl JobRuntime {
 
     pub fn snapshot(&self, kind: JobKind) -> JobSnapshot {
         let elapsed = match self.started_instant {
-            Some(instant) => instant.elapsed().as_secs(),
+            Some(instant) => self.elapsed_secs + instant.elapsed().as_secs(),
             None => self.elapsed_secs,
         };
         JobSnapshot {
@@ -185,10 +185,40 @@ impl JobRuntime {
         token
     }
 
+    /// 继续执行：保留已完成/失败计数、批次与日志，只重置运行态。
+    ///
+    /// 与 [`Self::begin`] 的区别是“不清零”：已完成的分组不会被重复统计，
+    /// 之前失败的分组数量也会保留，便于用户看到真实的累计进度。
+    pub fn resume(
+        &mut self,
+        total: usize,
+        done: usize,
+        failed: usize,
+        batch_total: usize,
+        message: &str,
+    ) -> CancellationToken {
+        self.generation += 1;
+        self.phase = JobPhase::Running;
+        self.total = total.max(done + failed);
+        self.done = done;
+        self.failed = failed;
+        self.running = 0;
+        self.batch_total = self.batch_done.saturating_add(batch_total);
+        self.message = message.to_string();
+        if self.started_at.is_none() {
+            self.started_at = Some(now_iso());
+        }
+        self.finished_at = None;
+        self.started_instant = Some(Instant::now());
+        let token = CancellationToken::new();
+        self.cancel = Some(token.clone());
+        token
+    }
+
     /// 结束任务并固化耗时。
     pub fn finish(&mut self, phase: JobPhase, message: impl Into<String>) {
         if let Some(instant) = self.started_instant.take() {
-            self.elapsed_secs = instant.elapsed().as_secs();
+            self.elapsed_secs += instant.elapsed().as_secs();
         }
         self.phase = phase;
         self.message = message.into();
@@ -232,6 +262,11 @@ impl JobRuntime {
         self.started_at = meta.started_at.clone();
         self.finished_at = meta.finished_at.clone();
         self.running = 0;
+        // 切换项目 / 重启后按新项目的数据重新计时，避免沿用上一个任务的耗时
+        self.started_instant = None;
+        self.elapsed_secs = 0;
+        self.batch_total = 0;
+        self.batch_done = 0;
     }
 
     pub fn to_meta(&self) -> JobMeta {
@@ -284,7 +319,8 @@ impl Default for JobHub {
 
 /// 计算重试等待时间。
 pub fn backoff_delay(strategy: BackoffStrategy, base_ms: u64, attempt: usize) -> Duration {
-    let base = base_ms.max(100);
+    // 允许 0（不等待）；上限 300 秒，与设置项范围一致
+    let base = base_ms.min(MAX_BACKOFF_MS);
     let factor = match strategy {
         BackoffStrategy::None => 0,
         BackoffStrategy::Linear => attempt.max(1) as u64,
@@ -293,5 +329,5 @@ pub fn backoff_delay(strategy: BackoffStrategy, base_ms: u64, attempt: usize) ->
             1u64 << shift
         }
     };
-    Duration::from_millis((base.saturating_mul(factor)).min(120_000))
+    Duration::from_millis((base.saturating_mul(factor)).min(MAX_BACKOFF_MS))
 }

@@ -308,6 +308,14 @@ pub struct ProjectCounts {
     pub pending_count: usize,
 }
 
+/// 条目状态统计：只数状态，不计算字符数，适合在任务过程中频繁调用。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StatusCounts {
+    pub total: usize,
+    pub done: usize,
+    pub failed: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
@@ -423,6 +431,22 @@ impl Project {
         counts
     }
 
+    /// 仅统计条目状态（不计算字符数），用于任务过程中的实时进度校准。
+    pub fn status_counts(&self) -> StatusCounts {
+        let mut counts = StatusCounts::default();
+        for group in &self.groups {
+            for item in &group.items {
+                counts.total += 1;
+                match item.status {
+                    ItemStatus::Done => counts.done += 1,
+                    ItemStatus::Failed => counts.failed += 1,
+                    ItemStatus::Pending => {}
+                }
+            }
+        }
+        counts
+    }
+
     pub fn group_options(&self) -> Vec<GroupOption> {
         self.groups
             .iter()
@@ -520,7 +544,7 @@ impl Project {
         Ok(())
     }
 
-    /// 继续执行：把失败条目重新放回待处理队列。
+    /// 继续执行：把失败条目重新放回待处理队列（失败计数随之清零，重新累积）。
     pub fn reset_failed(&mut self) {
         for group in &mut self.groups {
             for item in &mut group.items {

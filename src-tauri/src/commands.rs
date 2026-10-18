@@ -12,7 +12,10 @@ use crate::ai::client;
 use crate::glossary::{GlossaryImportReport, GlossaryTerm, TermPage, TermQuery};
 use crate::jobs::{glossary_job, translate_job, JobKind};
 use crate::project::{ImportReport, ItemPage, ItemQuery};
-use crate::settings::{ApiSettings, ApiSettingsInput, SettingsInput, SettingsView, mask_key};
+use crate::settings::{
+    ApiSettings, ApiSettingsInput, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, SettingsInput, SettingsView,
+    mask_key,
+};
 use crate::state::{AppInfo, AppState, JobSnapshots, ProjectSummary, RecentProject};
 use crate::storage;
 
@@ -81,7 +84,11 @@ pub async fn test_connection(
         },
         model: input.model.trim().to_string(),
         temperature: input.temperature,
-        timeout_secs: input.timeout_secs.clamp(10, 600),
+        timeout_secs: if input.timeout_secs.is_finite() {
+            input.timeout_secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS)
+        } else {
+            current.timeout_secs
+        },
         json_mode: input.json_mode,
     };
 
@@ -209,7 +216,8 @@ pub async fn export_translation(
             .as_ref()
             .ok_or_else(|| "尚未打开项目".to_string())?;
         let value = session.project.export_value();
-        let bytes = serde_json::to_vec(&value).map_err(|err| format!("生成译文 JSON 失败：{err}"))?;
+        let bytes =
+            storage::to_vec_indent4(&value).map_err(|err| format!("生成译文 JSON 失败：{err}"))?;
         (bytes, session.project.counts().item_count)
     };
     let path = PathBuf::from(&dest_path);

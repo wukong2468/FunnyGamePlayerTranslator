@@ -11,7 +11,10 @@ use tokio::sync::{Mutex, RwLock};
 use crate::glossary::{Glossary, GlossaryTerm, TermPage, TermQuery};
 use crate::jobs::{JobHub, JobKind, JobPhase, JobRuntime, JobSnapshot};
 use crate::project::{GroupOption, JobMeta, Project, ProjectCounts};
-use crate::settings::{Settings, SettingsInput, SettingsView};
+use crate::settings::{
+    MAX_BACKOFF_MS, MAX_BATCH_CHARS, MAX_BATCH_ITEMS, MAX_CONCURRENCY, MAX_RETRY_TIMES,
+    MAX_TIMEOUT_SECS, MIN_BATCH_CHARS, MIN_TIMEOUT_SECS, Settings, SettingsInput, SettingsView,
+};
 use crate::storage;
 use crate::util::now_iso;
 
@@ -664,16 +667,28 @@ fn merge_invalid_fields(settings: &mut Settings, defaults: &Settings) {
     if settings.api.model.trim().is_empty() {
         settings.api.model = defaults.api.model.clone();
     }
-    if !(10..=600).contains(&settings.api.timeout_secs) {
+    if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&settings.api.timeout_secs) {
         settings.api.timeout_secs = defaults.api.timeout_secs;
     }
-    if settings.translation.concurrency == 0 || settings.translation.concurrency > 16 {
+    if settings.translation.concurrency == 0 || settings.translation.concurrency > MAX_CONCURRENCY {
         settings.translation.concurrency = defaults.translation.concurrency;
     }
-    if settings.translation.max_chars_per_batch < 200 {
+    if !(MIN_BATCH_CHARS..=MAX_BATCH_CHARS).contains(&settings.translation.max_chars_per_batch) {
         settings.translation.max_chars_per_batch = defaults.translation.max_chars_per_batch;
     }
-    if settings.translation.max_items_per_batch == 0 {
+    if !(1..=MAX_BATCH_ITEMS).contains(&settings.translation.max_items_per_batch) {
         settings.translation.max_items_per_batch = defaults.translation.max_items_per_batch;
+    }
+    if settings.translation.retry_times > MAX_RETRY_TIMES {
+        settings.translation.retry_times = defaults.translation.retry_times;
+    }
+    if settings.translation.backoff_ms > MAX_BACKOFF_MS {
+        settings.translation.backoff_ms = defaults.translation.backoff_ms;
+    }
+    if !(MIN_BATCH_CHARS..=MAX_BATCH_CHARS).contains(&settings.translation.glossary_batch_chars) {
+        settings.translation.glossary_batch_chars = defaults.translation.glossary_batch_chars;
+    }
+    if !(1..=MAX_BATCH_ITEMS).contains(&settings.translation.glossary_batch_items) {
+        settings.translation.glossary_batch_items = defaults.translation.glossary_batch_items;
     }
 }

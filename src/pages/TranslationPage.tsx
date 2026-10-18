@@ -266,7 +266,7 @@ export default function TranslationPage() {
                 </Button>
               }
             >
-              有 {translate.failed} 条文本失败，继续执行将只重新处理这些条目。
+              有 {translate.failed} 条文本失败，继续执行会保留已完成进度，只重试失败与未处理条目。
             </Alert>
           )}
 

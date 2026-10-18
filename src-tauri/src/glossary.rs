@@ -322,7 +322,7 @@ impl Glossary {
                 }))
                 .collect::<Vec<_>>()
         });
-        storage::write_json_atomic(path, &payload, true)
+        storage::write_json_atomic_indent4(path, &payload)
     }
 }
 

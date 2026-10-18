@@ -331,7 +331,7 @@ function createDemoProject(sourcePath = DEMO_PATH): MockProject {
       translationSequence: source.split('\n'),
     })),
   }));
-  // 超长文本（超过默认单批上限 1200 字的 6 倍），用于演示跳过策略
+  // 超长 JSON 文本，用于演示超长文本策略（超过单批上限 6 倍时按策略跳过）
   parsed.push({
     id: 'dataEvents',
     translations: [
@@ -371,18 +371,18 @@ const defaultSettingsView = (): SettingsView => ({
     apiKeyMasked: '',
   },
   translation: {
-    concurrency: 3,
-    maxCharsPerBatch: 1200,
-    maxItemsPerBatch: 20,
-    retryTimes: 2,
+    concurrency: 10,
+    maxCharsPerBatch: 4000,
+    maxItemsPerBatch: 40,
+    retryTimes: 3,
     backoffStrategy: 'exponential',
-    backoffMs: 1500,
+    backoffMs: 1000,
     glossaryInjection: 'matched',
     systemPrompt: '',
     userPrompt: '',
     longTextStrategy: 'skip',
     continueOnBatchError: true,
-    glossaryBatchChars: 2000,
+    glossaryBatchChars: 4000,
     glossaryBatchItems: 40,
   },
 });
@@ -875,14 +875,20 @@ export const mockBackend: Backend = {
     if (!input.api.model.trim()) {
       throw new Error('model: 模型名称不能为空');
     }
-    if (input.translation.concurrency < 1 || input.translation.concurrency > 16) {
-      throw new Error('concurrency: 最大并发数需在 1 - 16 之间');
+    if (input.translation.concurrency < 1 || input.translation.concurrency > 500) {
+      throw new Error('concurrency: 并发数需在 1 - 500 之间');
     }
-    if (input.translation.maxCharsPerBatch < 200 || input.translation.maxCharsPerBatch > 20000) {
-      throw new Error('maxCharsPerBatch: 单批字符上限需在 200 - 20000 之间');
+    if (
+      input.translation.maxCharsPerBatch < 100 ||
+      input.translation.maxCharsPerBatch > 100000
+    ) {
+      throw new Error('maxCharsPerBatch: 单批字符上限需在 100 - 100000 之间');
     }
-    if (input.translation.maxItemsPerBatch < 1 || input.translation.maxItemsPerBatch > 200) {
-      throw new Error('maxItemsPerBatch: 单批条目上限需在 1 - 200 之间');
+    if (input.translation.maxItemsPerBatch < 1 || input.translation.maxItemsPerBatch > 1000) {
+      throw new Error('maxItemsPerBatch: 单批条目上限需在 1 - 1000 之间');
+    }
+    if (input.translation.retryTimes < 0 || input.translation.retryTimes > 100) {
+      throw new Error('retryTimes: 失败重试次数需在 0 - 100 之间');
     }
     if (!/^#[0-9a-fA-F]{6}$/.test(input.appearance.primaryColor)) {
       throw new Error('primaryColor: 主题色必须是 #RRGGBB 格式');
@@ -1089,7 +1095,7 @@ export const mockBackend: Backend = {
         translation_sequence: item.targetSegments,
       })),
     }));
-    const content = JSON.stringify(payload, null, 2);
+    const content = JSON.stringify(payload, null, 4);
     const fileName = baseName(destPath, `${project.fileName}.${project.targetLang}.json`);
     download(fileName, content);
     await delay(300);
@@ -1335,7 +1341,7 @@ export const mockBackend: Backend = {
         note: term.note,
       })),
     };
-    download(baseName(destPath, 'glossary.json'), JSON.stringify(payload, null, 2));
+    download(baseName(destPath, 'glossary.json'), JSON.stringify(payload, null, 4));
     await delay(200);
     return destPath;
   },
