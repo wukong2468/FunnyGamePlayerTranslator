@@ -33,6 +33,30 @@ pub fn read_text(path: &Path) -> Result<String> {
     Ok(text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text))
 }
 
+/// 计算文件内容哈希（SHA-256 十六进制），用于判断源文件是否被修改。
+pub fn file_hash(path: &Path) -> Result<String> {
+    use std::io::Read;
+
+    let mut file =
+        fs::File::open(path).with_context(|| format!("读取文件失败：{}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("读取文件失败：{}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 /// 写入二进制文件：先写临时文件并落盘，再原子替换目标文件。
 pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {

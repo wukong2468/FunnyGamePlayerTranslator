@@ -16,7 +16,9 @@ use crate::settings::{
     ApiSettings, ApiSettingsInput, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, SettingsInput, SettingsView,
     mask_key,
 };
-use crate::state::{AppInfo, AppState, JobSnapshots, ProjectSummary, RecentProject};
+use crate::state::{
+    AppInfo, AppState, JobSnapshots, ProjectEntry, ProjectSummary, SourceStatus,
+};
 use crate::storage;
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
@@ -144,25 +146,29 @@ pub async fn test_connection(
 }
 
 #[tauri::command]
-pub async fn get_recent_projects(state: SharedState<'_>) -> CommandResult<Vec<RecentProject>> {
-    Ok(state.recent_projects().await)
+pub async fn list_projects(state: SharedState<'_>) -> CommandResult<Vec<ProjectEntry>> {
+    Ok(state.list_projects().await)
 }
 
 #[tauri::command]
-pub async fn remove_recent_project(
+pub async fn project_source_status(
     state: SharedState<'_>,
     source_path: String,
-) -> CommandResult<()> {
-    state.remove_recent(&source_path).await.map_err(message)
+) -> CommandResult<SourceStatus> {
+    Ok(state.source_status(source_path).await)
 }
 
 #[tauri::command]
 pub async fn open_project(
     state: SharedState<'_>,
     source_path: String,
+    reload_source: Option<bool>,
 ) -> CommandResult<ProjectSummary> {
     let state = state.inner().clone();
-    state.open_project(source_path).await.map_err(message)
+    state
+        .open_project(source_path, reload_source.unwrap_or(false))
+        .await
+        .map_err(message)
 }
 
 #[tauri::command]

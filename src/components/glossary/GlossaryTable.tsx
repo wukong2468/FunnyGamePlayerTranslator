@@ -102,7 +102,7 @@ export function GlossaryTable({
           </Button>
           <Button
             variant="outlined"
-            startIcon={<FileUploadOutlinedIcon />}
+            startIcon={<FileDownloadOutlinedIcon />}
             onClick={onImport}
             disabled={busy}
           >
@@ -110,7 +110,7 @@ export function GlossaryTable({
           </Button>
           <Button
             variant="outlined"
-            startIcon={<FileDownloadOutlinedIcon />}
+            startIcon={<FileUploadOutlinedIcon />}
             onClick={onExport}
             disabled={busy || (page?.total ?? 0) === 0}
           >

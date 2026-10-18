@@ -8,10 +8,11 @@ import type {
   ItemQuery,
   JobKind,
   JobSnapshots,
+  ProjectEntry,
   ProjectSource,
   ProjectSummary,
-  RecentProject,
   SettingsInput,
+  SourceStatus,
   SettingsView,
   ApiSettingsInput,
   TermPage,
@@ -27,10 +28,11 @@ export interface Backend {
   saveSettings(input: SettingsInput): Promise<SettingsView>;
   testConnection(input: ApiSettingsInput): Promise<TestConnectionResult>;
 
-  getRecentProjects(): Promise<RecentProject[]>;
-  removeRecentProject(sourcePath: string): Promise<void>;
+  listProjects(): Promise<ProjectEntry[]>;
+  /** 检测源文件是否存在、内容是否与项目记录不一致。 */
+  projectSourceStatus(sourcePath: string): Promise<SourceStatus>;
 
-  openProject(source: ProjectSource): Promise<ProjectSummary>;
+  openProject(source: ProjectSource, reloadSource?: boolean): Promise<ProjectSummary>;
   getProjectSummary(): Promise<ProjectSummary>;
   setLanguages(sourceLang: string, targetLang: string): Promise<ProjectSummary>;
 

@@ -1,4 +1,4 @@
-//! 全局状态：设置、项目会话、最近项目、工作区持久化。
+//! 全局状态：设置、项目会话、项目列表、工作区持久化。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,9 +21,9 @@ use crate::util::now_iso;
 const PROJECT_FILE: &str = "project.json";
 const GLOSSARY_FILE: &str = "glossary.json";
 const PROGRESS_FILE: &str = "glossary_progress.json";
+/// 工作区摘要（体积小），用于“所有项目”列表，避免每次都解析几十 MB 的 project.json。
+const META_FILE: &str = "meta.json";
 const SETTINGS_FILE: &str = "settings.json";
-const RECENT_FILE: &str = "recent.json";
-const MAX_RECENT: usize = 12;
 
 /// 术语收集进度（含任务状态）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -44,18 +44,32 @@ pub struct Session {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentProject {
+/// 一个项目工作区的概要信息（即“所有项目”列表中的一项）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectEntry {
     pub source_path: String,
     pub file_name: String,
+    pub workspace_path: String,
     pub item_count: usize,
     pub done_count: usize,
+    pub failed_count: usize,
+    pub pending_count: usize,
+    pub skipped_count: usize,
     pub glossary_count: usize,
     pub source_lang: String,
     pub target_lang: String,
     pub updated_at: String,
+    /// 上次加载源文件时的内容哈希，用于检测源文件变化。
+    pub source_hash: String,
+}
+
+/// 源文件与项目副本的比对结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceStatus {
     pub exists: bool,
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,7 +117,6 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub workspace_root: PathBuf,
     pub settings: RwLock<Settings>,
-    pub recent: RwLock<Vec<RecentProject>>,
     pub session: RwLock<Option<Session>>,
     pub jobs: JobHub,
     save_lock: Mutex<()>,
@@ -136,12 +149,6 @@ impl AppState {
             }
         };
 
-        let recent_path = data_dir.join(RECENT_FILE);
-        let mut recent: Vec<RecentProject> = storage::read_json(&recent_path).ok().flatten().unwrap_or_default();
-        for entry in &mut recent {
-            entry.exists = Path::new(&entry.source_path).exists();
-        }
-
         let http = reqwest::Client::builder()
             .user_agent("FunnyGamePlayerTranslator/1.0")
             .build()
@@ -152,7 +159,6 @@ impl AppState {
             data_dir,
             workspace_root,
             settings: RwLock::new(settings),
-            recent: RwLock::new(recent),
             session: RwLock::new(None),
             jobs: JobHub::new(),
             save_lock: Mutex::new(()),
@@ -187,47 +193,95 @@ impl AppState {
         storage::write_json_atomic(&self.data_dir.join(SETTINGS_FILE), &snapshot, true)
     }
 
-    pub async fn recent_projects(&self) -> Vec<RecentProject> {
-        let mut recent = self.recent.write().await;
-        for entry in recent.iter_mut() {
-            entry.exists = Path::new(&entry.source_path).exists();
-        }
-        recent.clone()
+    /// 扫描 workspaces 目录下的所有项目，按更新时间倒序返回。
+    pub async fn list_projects(&self) -> Vec<ProjectEntry> {
+        let root = self.workspace_root.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut entries: Vec<ProjectEntry> = Vec::new();
+            let Ok(dirs) = std::fs::read_dir(&root) else {
+                return entries;
+            };
+            for dir in dirs.flatten() {
+                let workspace = dir.path();
+                if !workspace.is_dir() {
+                    continue;
+                }
+                if !workspace.join(PROJECT_FILE).exists() {
+                    continue;
+                }
+                if let Some(entry) = read_project_entry(&workspace) {
+                    entries.push(entry);
+                }
+            }
+            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            entries
+        })
+        .await
+        .unwrap_or_default()
     }
 
-    pub async fn remove_recent(&self, source_path: &str) -> Result<()> {
-        {
-            let mut recent = self.recent.write().await;
-            recent.retain(|entry| entry.source_path != source_path);
+    /// 判断源文件是否存在、以及内容是否与项目副本记录的哈希不一致。
+    pub async fn source_status(&self, source_path: String) -> SourceStatus {
+        let path = PathBuf::from(&source_path);
+        if !path.is_file() {
+            return SourceStatus {
+                exists: false,
+                changed: false,
+            };
         }
-        self.persist_recent().await
-    }
-
-    async fn persist_recent(&self) -> Result<()> {
-        let snapshot = self.recent.read().await.clone();
-        let _guard = self.save_lock.lock().await;
-        storage::write_json_atomic(&self.data_dir.join(RECENT_FILE), &snapshot, true)
+        let workspace = self.workspace_dir(&source_path);
+        let stored = read_stored_hash(&workspace);
+        let hash = tokio::task::spawn_blocking(move || storage::file_hash(&path))
+            .await
+            .ok()
+            .and_then(|result| result.ok())
+            .unwrap_or_default();
+        SourceStatus {
+            exists: true,
+            changed: !stored.is_empty() && !hash.is_empty() && stored != hash,
+        }
     }
 
     pub fn workspace_dir(&self, source_path: &str) -> PathBuf {
         self.workspace_root.join(storage::workspace_dir_name(source_path))
     }
 
-    /// 打开源文件，加载或创建工作区并恢复进度。
-    pub async fn open_project(self: &Arc<Self>, source_path: String) -> Result<ProjectSummary> {
+    /// 打开项目：优先按源文件解析并与工作区副本合并。
+    ///
+    /// `reload_source` 为 true 时按源文件重建条目：原文未变且已完成的译文保留，
+    /// 失败/未处理条目重置，源文件中已不存在的条目连同译文一起丢弃；术语表保留。
+    /// 源文件不存在时直接使用工作区内保存的完整副本。
+    pub async fn open_project(
+        self: &Arc<Self>,
+        source_path: String,
+        reload_source: bool,
+    ) -> Result<ProjectSummary> {
         let path = PathBuf::from(&source_path);
-        if !path.is_file() {
-            anyhow::bail!("文件不存在或无法访问：{source_path}");
+        let workspace = self.workspace_dir(&source_path);
+        let workspace_file = workspace.join(PROJECT_FILE);
+        let source_available = path.is_file();
+
+        if !source_available && !workspace_file.exists() {
+            anyhow::bail!("文件不存在或无法访问，且项目内没有可用的副本：{source_path}");
         }
 
-        if let Some(session) = self.session.read().await.as_ref() {
-            if session.project.source_path == source_path {
-                return Ok(self.summary_of(
-                    session,
-                    vec!["该文件已在当前项目中打开，未重复加载".to_string()],
-                ));
+        // 只有“重新加载文件”才允许对同一个项目重复加载
+        let session_glossary = {
+            let guard = self.session.read().await;
+            match guard.as_ref() {
+                Some(session) if session.project.source_path == source_path => {
+                    if !reload_source {
+                        return Ok(self.summary_of(
+                            session,
+                            vec!["该文件已在当前项目中打开，未重复加载".to_string()],
+                        ));
+                    }
+                    // 重新加载同一项目时沿用内存中的术语表与收集进度，避免读盘丢失未及时写入的修改
+                    Some((session.glossary.clone(), session.progress.clone()))
+                }
+                _ => None,
             }
-        }
+        };
 
         // 任务执行期间切换项目会让批次写入错位的条目，必须先中断任务
         {
@@ -248,59 +302,123 @@ impl AppState {
             }
         }
 
-        let read_path = path.clone();
-        let text = tokio::task::spawn_blocking(move || storage::read_text(&read_path))
-            .await
-            .map_err(|err| anyhow::anyhow!("读取文件任务失败：{err}"))??;
-
         let mut warnings = Vec::new();
-        let parse_path = source_path.clone();
-        let mut project = tokio::task::spawn_blocking(move || Project::parse(&parse_path, &text))
-            .await
-            .map_err(|err| anyhow::anyhow!("解析文件任务失败：{err}"))??;
-
-        let workspace = self.workspace_dir(&source_path);
         std::fs::create_dir_all(&workspace).ok();
         // debug 构建下，调试日志写入当前项目工作区的 debug.log
         crate::ai::debug_log::set_workspace(&workspace);
 
-        if workspace.join(PROJECT_FILE).exists() {
-            match storage::read_json::<Project>(&workspace.join(PROJECT_FILE)) {
+        // 工作区里保存的是完整的原文 + 译文 + 状态，按原文匹配后覆盖到刚解析的项目上
+        let existing = if workspace_file.exists() {
+            match storage::read_json::<Project>(&workspace_file) {
                 Ok(Some(saved)) => {
                     if saved.version > crate::project::WORKSPACE_VERSION {
                         warnings.push("工作区由更新版本创建，部分字段可能无法识别".to_string());
                     }
-                    project.merge_saved(&saved);
+                    Some(saved)
                 }
-                Ok(None) => {}
+                Ok(None) => None,
                 Err(err) => {
-                    let backup = workspace.join(format!("project.broken-{}.json", storage::path_hash(&now_iso())));
-                    let _ = std::fs::rename(workspace.join(PROJECT_FILE), &backup);
+                    let backup = workspace.join(format!(
+                        "project.broken-{}.json",
+                        storage::path_hash(&now_iso())
+                    ));
+                    let _ = std::fs::rename(&workspace_file, &backup);
                     warnings.push(format!("上次保存的项目数据损坏，已备份并重新开始：{err}"));
+                    None
                 }
             }
-        }
+        } else {
+            None
+        };
+
+        let mut project = if source_available {
+            let read_path = path.clone();
+            let text = tokio::task::spawn_blocking(move || storage::read_text(&read_path))
+                .await
+                .map_err(|err| anyhow::anyhow!("读取文件任务失败：{err}"))??;
+
+            let parse_path = source_path.clone();
+            let mut parsed = tokio::task::spawn_blocking(move || Project::parse(&parse_path, &text))
+                .await
+                .map_err(|err| anyhow::anyhow!("解析文件任务失败：{err}"))??;
+
+            let hash_path = path.clone();
+            let source_hash = tokio::task::spawn_blocking(move || storage::file_hash(&hash_path))
+                .await
+                .ok()
+                .and_then(|result| result.ok())
+                .unwrap_or_default();
+
+            if reload_source {
+                // 重新加载源文件：保留原文未变且已完成的译文，其余重置
+                if let Some(saved) = &existing {
+                    parsed.source_lang = saved.source_lang.clone();
+                    parsed.target_lang = saved.target_lang.clone();
+                    parsed.apply_reload_from(saved);
+                }
+                parsed.source_hash = source_hash;
+                warnings.push(
+                    "已按源文件重新加载：原文未变的已完成译文已保留，其余条目重置为待处理；术语表与术语收集进度保留"
+                        .to_string(),
+                );
+            } else {
+                if let Some(saved) = &existing {
+                    parsed.merge_saved(saved);
+                }
+                // 译文仍然基于旧内容时保留旧哈希，这样下次打开还会继续提示源文件已变化
+                let stored = existing
+                    .as_ref()
+                    .map(|saved| saved.source_hash.clone())
+                    .unwrap_or_default();
+                parsed.source_hash = if stored.is_empty() {
+                    source_hash
+                } else {
+                    stored
+                };
+            }
+            parsed
+        } else {
+            // 源文件已删除：直接加载项目内保存的完整副本
+            let saved = existing.ok_or_else(|| {
+                anyhow::anyhow!("文件不存在或无法访问，且项目内没有可用的副本：{source_path}")
+            })?;
+            warnings.push("源文件已不存在，已使用项目内保存的完整副本".to_string());
+            saved
+        };
         // 旧版本会把纯数字/符号条目记成已完成，这里统一修正为“无需翻译”
         project.normalize_statuses();
 
-        let glossary = match storage::read_json::<Glossary>(&workspace.join(GLOSSARY_FILE)) {
-            Ok(Some(mut glossary)) => {
+        let (glossary, progress) = match session_glossary {
+            // 重新加载同一项目：沿用内存里的术语表与收集进度
+            Some((mut glossary, progress)) => {
                 glossary.rebuild();
-                glossary
+                (glossary, progress)
             }
-            Ok(None) => Glossary::default(),
-            Err(err) => {
-                let backup = workspace.join(format!("glossary.broken-{}.json", storage::path_hash(&now_iso())));
-                let _ = std::fs::rename(workspace.join(GLOSSARY_FILE), &backup);
-                warnings.push(format!("术语表文件损坏，已备份并重新开始：{err}"));
-                Glossary::default()
+            None => {
+                let glossary = match storage::read_json::<Glossary>(&workspace.join(GLOSSARY_FILE)) {
+                    Ok(Some(mut glossary)) => {
+                        glossary.rebuild();
+                        glossary
+                    }
+                    Ok(None) => Glossary::default(),
+                    Err(err) => {
+                        let backup = workspace.join(format!(
+                            "glossary.broken-{}.json",
+                            storage::path_hash(&now_iso())
+                        ));
+                        let _ = std::fs::rename(workspace.join(GLOSSARY_FILE), &backup);
+                        warnings.push(format!("术语表文件损坏，已备份并重新开始：{err}"));
+                        Glossary::default()
+                    }
+                };
+                let progress =
+                    match storage::read_json::<GlossaryProgress>(&workspace.join(PROGRESS_FILE)) {
+                        Ok(Some(progress)) => progress,
+                        Ok(None) => GlossaryProgress::default(),
+                        Err(_) => GlossaryProgress::default(),
+                    };
+                (glossary, progress)
             }
-        };
-
-        let progress = match storage::read_json::<GlossaryProgress>(&workspace.join(PROGRESS_FILE)) {
-            Ok(Some(progress)) => progress,
-            Ok(None) => GlossaryProgress::default(),
-            Err(_) => GlossaryProgress::default(),
         };
 
         // 已存在的条目数与磁盘不一致时，保守地清理无效分组记录
@@ -449,24 +567,34 @@ impl AppState {
         }
     }
 
-    async fn upsert_recent(&self, summary: &ProjectSummary) {
-        let mut recent = self.recent.write().await;
-        recent.retain(|entry| entry.source_path != summary.source_path);
-        recent.insert(
-            0,
-            RecentProject {
-                source_path: summary.source_path.clone(),
-                file_name: summary.file_name.clone(),
-                item_count: summary.item_count,
-                done_count: summary.done_count,
-                glossary_count: summary.glossary_count,
-                source_lang: summary.source_lang.clone(),
-                target_lang: summary.target_lang.clone(),
+    /// 更新工作区摘要（meta.json），供“所有项目”列表快速读取。
+    async fn write_workspace_meta(&self) {
+        let entry = {
+            let guard = self.session.read().await;
+            let Some(session) = guard.as_ref() else {
+                return;
+            };
+            let counts = session.project.status_counts();
+            ProjectEntry {
+                source_path: session.project.source_path.clone(),
+                file_name: session.project.file_name.clone(),
+                workspace_path: session.workspace.display().to_string(),
+                item_count: counts.total,
+                done_count: counts.done,
+                failed_count: counts.failed,
+                pending_count: counts
+                    .total
+                    .saturating_sub(counts.done + counts.failed + counts.skipped),
+                skipped_count: counts.skipped,
+                glossary_count: session.glossary.terms.len(),
+                source_lang: session.project.source_lang.clone(),
+                target_lang: session.project.target_lang.clone(),
                 updated_at: now_iso(),
-                exists: Path::new(&summary.source_path).exists(),
-            },
-        );
-        recent.truncate(MAX_RECENT);
+                source_hash: session.project.source_hash.clone(),
+            }
+        };
+        let path = Path::new(&entry.workspace_path).join(META_FILE);
+        let _ = storage::write_json_atomic(&path, &entry, true);
     }
 
     pub async fn set_languages(&self, source_lang: String, target_lang: String) -> Result<ProjectSummary> {
@@ -556,8 +684,7 @@ impl AppState {
             runtime.to_meta()
         };
 
-        // 注意：save_lock 只覆盖文件写入阶段。后续同步最近项目时还会再次申请该锁，
-        // 若在持锁状态下调用 persist_recent 会自死锁（表现为打开文件后一直加载）。
+        // 注意：save_lock 只覆盖文件写入阶段，后续写摘要时不要再持锁调用可重入路径。
         {
             let _guard = self.save_lock.lock().await;
 
@@ -621,15 +748,8 @@ impl AppState {
             }
         }
 
-        // 同步最近项目摘要
-        let summary = {
-            let guard = self.session.read().await;
-            guard.as_ref().map(|session| self.summary_of(session, Vec::new()))
-        };
-        if let Some(summary) = summary {
-            self.upsert_recent(&summary).await;
-            self.persist_recent().await.ok();
-        }
+        // 更新工作区摘要，供“所有项目”列表读取
+        self.write_workspace_meta().await;
     }
 
     /// 后台自动保存循环：合并短时间内的连续修改，降低写入频率。
@@ -714,6 +834,75 @@ impl AppState {
         }
         self.persist_session().await;
     }
+}
+
+/// 读取工作区摘要；没有 meta.json 时回退解析 project.json，并补写摘要。
+fn read_project_entry(workspace: &Path) -> Option<ProjectEntry> {
+    if let Ok(Some(mut entry)) = storage::read_json::<ProjectEntry>(&workspace.join(META_FILE)) {
+        if entry.workspace_path.is_empty() {
+            entry.workspace_path = workspace.display().to_string();
+        }
+        return Some(entry);
+    }
+
+    let project = storage::read_json::<Project>(&workspace.join(PROJECT_FILE))
+        .ok()
+        .flatten()?;
+    let counts = project.status_counts();
+    let glossary_count = storage::read_json::<Glossary>(&workspace.join(GLOSSARY_FILE))
+        .ok()
+        .flatten()
+        .map(|glossary| glossary.terms.len())
+        .unwrap_or(0);
+    let updated_at = if project.saved_at.trim().is_empty() {
+        file_modified_iso(&workspace.join(PROJECT_FILE))
+    } else {
+        project.saved_at.clone()
+    };
+    let entry = ProjectEntry {
+        source_path: project.source_path,
+        file_name: project.file_name,
+        workspace_path: workspace.display().to_string(),
+        item_count: counts.total,
+        done_count: counts.done,
+        failed_count: counts.failed,
+        pending_count: counts
+            .total
+            .saturating_sub(counts.done + counts.failed + counts.skipped),
+        skipped_count: counts.skipped,
+        glossary_count,
+        source_lang: project.source_lang,
+        target_lang: project.target_lang,
+        updated_at,
+        source_hash: project.source_hash,
+    };
+    let _ = storage::write_json_atomic(&workspace.join(META_FILE), &entry, true);
+    Some(entry)
+}
+
+/// 读取项目副本记录的源文件哈希：优先 meta.json，缺失时解析 project.json。
+fn read_stored_hash(workspace: &Path) -> String {
+    if let Ok(Some(entry)) = storage::read_json::<ProjectEntry>(&workspace.join(META_FILE)) {
+        if !entry.source_hash.is_empty() {
+            return entry.source_hash;
+        }
+    }
+    storage::read_json::<Project>(&workspace.join(PROJECT_FILE))
+        .ok()
+        .flatten()
+        .map(|project| project.source_hash)
+        .unwrap_or_default()
+}
+
+/// 文件修改时间（RFC3339），读取失败时退回当前时间。
+fn file_modified_iso(path: &Path) -> String {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .map(|time| {
+            chrono::DateTime::<chrono::Local>::from(time)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+        .unwrap_or_else(|_| now_iso())
 }
 
 fn merge_invalid_fields(settings: &mut Settings, defaults: &Settings) {

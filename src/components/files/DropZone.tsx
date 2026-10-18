@@ -41,7 +41,7 @@ export function DropZone({ active, disabled = false, onPick }: DropZoneProps) {
         {active ? '松开即可导入文件' : '将 FunnyGameTranslations.json 拖到此处'}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-        也可以使用文件选择器导入。文件只在本地读取与处理，不会上传到任何第三方服务。
+        也可以使用文件选择器导入。
       </Typography>
       <Button
         variant="contained"

@@ -14,19 +14,38 @@ import HistoryIcon from '@mui/icons-material/History';
 import TranslateIcon from '@mui/icons-material/Translate';
 import { useCallback, useState } from 'react';
 
-import { isDesktop } from '@/api';
+import { api, isDesktop } from '@/api';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SectionCard } from '@/components/common/SectionCard';
 import { DropZone } from '@/components/files/DropZone';
-import { RecentProjectList } from '@/components/files/RecentProjectList';
+import { ProjectList } from '@/components/files/ProjectList';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useAppStore } from '@/store/useAppStore';
-import type { ProjectSource } from '@/types';
+import type { ProjectEntry, ProjectSource } from '@/types';
 import { pickJsonFile } from '@/utils/fileDialog';
-import { formatNumber } from '@/utils/format';
 
 const DEMO_PATH = 'demo://FunnyGameTranslations.json';
+
+interface ReloadTarget {
+  source: ProjectSource;
+  fileName: string;
+}
+
+const fileNameOf = (path: string): string => path.split(/[\\/]/).pop() || path;
+
+/** 源文件存在且内容与该项目的记录不一致时返回 true。 */
+async function sourceChanged(path: string): Promise<boolean> {
+  if (!isDesktop || !path || path.startsWith('demo://')) {
+    return false;
+  }
+  try {
+    return (await api.projectSourceStatus(path)).changed;
+  } catch {
+    return false;
+  }
+}
 
 const STEPS = [
   { title: '导入源文件', text: '解析分组、条目与现有译文' },
@@ -36,20 +55,22 @@ const STEPS = [
 ];
 
 export default function WelcomePage() {
-  const summary = useAppStore((state) => state.summary);
-  const recent = useAppStore((state) => state.recent);
-  const appInfo = useAppStore((state) => state.appInfo);
+  const projects = useAppStore((state) => state.projects);
   const opening = useAppStore((state) => state.opening);
   const openProject = useAppStore((state) => state.openProject);
-  const removeRecent = useAppStore((state) => state.removeRecent);
-  const notify = useAppStore((state) => state.notify);
   const [error, setError] = useState('');
+  // 源文件内容变化时，先询问是否按源文件重新加载
+  const [reloadTarget, setReloadTarget] = useState<ReloadTarget | null>(null);
 
   const handleSource = useCallback(
     async (source: ProjectSource) => {
       setError('');
       if (!source.path.toLowerCase().endsWith('.json') && !source.text) {
         setError('请选择 FunnyGameTranslations.json 文件');
+        return;
+      }
+      if (await sourceChanged(source.path)) {
+        setReloadTarget({ source, fileName: fileNameOf(source.path) });
         return;
       }
       await openProject(source);
@@ -71,13 +92,21 @@ export default function WelcomePage() {
     }
   };
 
-  const handleOpenRecent = async (path: string, exists: boolean) => {
-    if (!exists) {
-      notify('warning', '该文件已被移动或删除，请重新选择文件');
+  const handleOpenProject = async (item: ProjectEntry) => {
+    setError('');
+    if (await sourceChanged(item.sourcePath)) {
+      setReloadTarget({ source: { path: item.sourcePath }, fileName: item.fileName });
       return;
     }
-    setError('');
-    await openProject({ path });
+    await openProject({ path: item.sourcePath });
+  };
+
+  const closeReloadDialog = (reloadSource: boolean) => {
+    const target = reloadTarget;
+    setReloadTarget(null);
+    if (target) {
+      void openProject(target.source, reloadSource);
+    }
   };
 
   return (
@@ -184,59 +213,55 @@ export default function WelcomePage() {
 
         <Stack spacing={2.5}>
           <SectionCard
-            title="最近项目"
-            subtitle="打开后可恢复上次的术语表、译文与任务进度"
+            title="所有项目"
             action={
               <Chip
                 size="small"
                 variant="outlined"
                 icon={<HistoryIcon />}
-                label={`${recent.length} 个`}
+                label={`${projects.length} 个`}
               />
             }
             noPadding
           >
-            {recent.length === 0 ? (
+            {projects.length === 0 ? (
               <EmptyState
                 icon={<HistoryIcon fontSize="inherit" />}
-                title="还没有最近项目"
-                description="导入 FunnyGameTranslations.json 后，这里会显示项目进度，方便随时继续。"
+                title="还没有项目"
+                description="导入 FunnyGameTranslations.json 后，项目会保存在本机工作区，可随时继续。"
                 compact
               />
             ) : (
-              <RecentProjectList
-                items={recent}
+              <ProjectList
+                items={projects}
                 busy={opening}
-                onOpen={(item) => void handleOpenRecent(item.sourcePath, item.exists)}
-                onRemove={(item) => void removeRecent(item.sourcePath)}
+                onOpen={(item) => void handleOpenProject(item)}
               />
             )}
           </SectionCard>
-
-          {summary && (
-            <Alert
-              severity="success"
-              variant="outlined"
-              action={
-                <Button size="small" onClick={() => useAppStore.getState().navigate('config')}>
-                  查看项目
-                </Button>
-              }
-            >
-              当前已加载 {summary.fileName}，共 {formatNumber(summary.itemCount)} 条文本。
-            </Alert>
-          )}
-
-          <SectionCard title="数据存放位置" subtitle="所有数据仅保存在本机">
-            <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-              {appInfo?.dataDir ?? '—'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-              设置、工作区、最近项目均位于该目录；关键文件使用临时文件 + 原子替换写入。
-            </Typography>
-          </SectionCard>
         </Stack>
       </Box>
+
+      <ConfirmDialog
+        open={Boolean(reloadTarget)}
+        title="源文件已发生变化"
+        description={
+          <>
+            {reloadTarget?.fileName ?? ''} 的内容与项目记录不一致。
+            <br />
+            重新加载会按源文件重建条目：原文未变化且已完成的译文会保留，失败与未处理的条目重置为待处理，
+            源文件中已不存在的条目连同译文一并移除；术语表与术语收集进度保留。
+            <br />
+            使用项目内数据则继续用工作区里保存的副本。
+          </>
+        }
+        confirmLabel="重新加载文件"
+        cancelLabel="使用项目内数据"
+        danger
+        loading={opening}
+        onCancel={() => closeReloadDialog(false)}
+        onConfirm={() => closeReloadDialog(true)}
+      />
     </>
   );
 }

@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 
-import { api, isDesktop } from '@/api';
+import { api } from '@/api';
 import type {
   AppInfo,
+  ProjectEntry,
   ProjectSource,
   ProjectSummary,
-  RecentProject,
   Route,
   SettingsInput,
   SettingsView,
@@ -25,7 +25,8 @@ interface AppStore {
   route: Route;
   settings: SettingsView | null;
   summary: ProjectSummary | null;
-  recent: RecentProject[];
+  /** 所有项目（扫描工作区得到，按更新时间倒序）。 */
+  projects: ProjectEntry[];
   appInfo: AppInfo | null;
   opening: boolean;
   busy: string | null;
@@ -35,9 +36,8 @@ interface AppStore {
   navigate: (route: Route) => void;
   notify: (severity: Severity, message: string) => void;
   dismissSnackbar: () => void;
-  openProject: (source: ProjectSource) => Promise<boolean>;
-  loadRecent: () => Promise<void>;
-  removeRecent: (sourcePath: string) => Promise<void>;
+  openProject: (source: ProjectSource, reloadSource?: boolean) => Promise<boolean>;
+  loadProjects: () => Promise<void>;
   refreshSummary: () => Promise<void>;
   applySummary: (summary: ProjectSummary) => void;
   setLanguages: (sourceLang: string, targetLang: string) => Promise<void>;
@@ -55,7 +55,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   route: 'welcome',
   settings: null,
   summary: null,
-  recent: [],
+  projects: [],
   appInfo: null,
   opening: false,
   busy: null,
@@ -67,35 +67,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     bootstrapping = true;
     try {
-      const [appInfo, settings, recent] = await Promise.all([
+      const [appInfo, settings, projects] = await Promise.all([
         api.getAppInfo(),
         api.getSettings(),
-        api.getRecentProjects(),
+        api.listProjects(),
       ]);
+      // 仅在会话已存在时（如开发模式热更新）沿用摘要，启动时不再自动打开任何项目
       let summary: ProjectSummary | null = null;
       try {
         summary = await api.getProjectSummary();
       } catch {
         summary = null;
       }
-      // 桌面端自动恢复上次打开的项目与任务进度；浏览器预览保持欢迎页便于调试
-      if (!summary && isDesktop) {
-        const last = recent.find((entry) => entry.exists);
-        if (last) {
-          try {
-            summary = await api.openProject({ path: last.sourcePath });
-          } catch {
-            summary = null;
-          }
-        }
-      }
       set({
         appInfo,
         settings,
-        recent,
+        projects,
         summary,
         ready: true,
-        route: summary ? 'config' : 'welcome',
+        // 启动后固定停在欢迎页，项目必须由用户手动打开
+        route: 'welcome',
       });
     } catch (error) {
       set({ ready: true, fatalError: errorMessage(error) });
@@ -109,12 +100,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   dismissSnackbar: () => set({ snackbar: null }),
 
-  openProject: async (source) => {
+  openProject: async (source, reloadSource = false) => {
     set({ opening: true });
     try {
-      const summary = await api.openProject(source);
-      const recent = await api.getRecentProjects();
-      set({ summary, recent, route: 'config' });
+      const summary = await api.openProject(source, reloadSource);
+      const projects = await api.listProjects();
+      set({ summary, projects, route: 'config' });
       if (summary.warnings.length > 0) {
         get().notify('warning', summary.warnings.join('；'));
       } else {
@@ -129,20 +120,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  loadRecent: async () => {
+  loadProjects: async () => {
     try {
-      const recent = await api.getRecentProjects();
-      set({ recent });
-    } catch (error) {
-      get().notify('error', errorMessage(error));
-    }
-  },
-
-  removeRecent: async (sourcePath) => {
-    try {
-      await api.removeRecentProject(sourcePath);
-      await get().loadRecent();
-      get().notify('info', '已从最近项目中移除');
+      const projects = await api.listProjects();
+      set({ projects });
     } catch (error) {
       get().notify('error', errorMessage(error));
     }

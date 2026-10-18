@@ -20,9 +20,9 @@ import type {
   JobSnapshot,
   JobSnapshots,
   LogEntry,
+  ProjectEntry,
   ProjectSource,
   ProjectSummary,
-  RecentProject,
   SettingsInput,
   SettingsView,
   TermPage,
@@ -34,7 +34,7 @@ import { DEFAULT_APPEARANCE } from '@/types';
 import type { Backend } from './contract';
 
 const SETTINGS_KEY = 'fgpt.mock.settings.v1';
-const RECENT_KEY = 'fgpt.mock.recent.v1';
+const PROJECTS_KEY = 'fgpt.mock.projects.v1';
 const DEMO_PATH = 'demo://FunnyGameTranslations.json';
 
 // ---------------------------------------------------------------- 通用工具
@@ -464,11 +464,11 @@ function settingsView(): SettingsView {
 
 let storedSettings = loadSettings();
 
-// ---------------------------------------------------------------- 最近项目
+// ---------------------------------------------------------------- 项目列表
 
-function loadRecent(): RecentProject[] {
+function loadProjects(): ProjectEntry[] {
   try {
-    const raw = window.localStorage.getItem(RECENT_KEY);
+    const raw = window.localStorage.getItem(PROJECTS_KEY);
     if (!raw) {
       return [];
     }
@@ -479,24 +479,28 @@ function loadRecent(): RecentProject[] {
     return parsed.filter(isRecord).map((entry) => ({
       sourcePath: asString(entry.sourcePath),
       fileName: asString(entry.fileName),
+      workspacePath:
+        asString(entry.workspacePath) || `memory://workspaces/${asString(entry.fileName)}`,
       itemCount: Number(entry.itemCount) || 0,
       doneCount: Number(entry.doneCount) || 0,
+      failedCount: Number(entry.failedCount) || 0,
+      pendingCount: Number(entry.pendingCount) || 0,
+      skippedCount: Number(entry.skippedCount) || 0,
       glossaryCount: Number(entry.glossaryCount) || 0,
       sourceLang: asString(entry.sourceLang) || 'ja',
       targetLang: asString(entry.targetLang) || 'zh-CN',
       updatedAt: asString(entry.updatedAt) || nowIso(),
-      exists: asString(entry.sourcePath).startsWith('demo://'),
     }));
   } catch {
     return [];
   }
 }
 
-let recentProjects = loadRecent();
+let projectEntries = loadProjects();
 
-function persistRecent(): void {
+function persistProjects(): void {
   try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(recentProjects));
+    window.localStorage.setItem(PROJECTS_KEY, JSON.stringify(projectEntries));
   } catch {
     // 忽略
   }
@@ -683,21 +687,66 @@ function summary(): ProjectSummary {
   };
 }
 
-function upsertRecent(value: ProjectSummary): void {
-  recentProjects = recentProjects.filter((entry) => entry.sourcePath !== value.sourcePath);
-  recentProjects.unshift({
+function upsertProject(value: ProjectSummary): void {
+  const entry: ProjectEntry = {
     sourcePath: value.sourcePath,
     fileName: value.fileName,
+    workspacePath: value.workspacePath,
     itemCount: value.itemCount,
     doneCount: value.doneCount,
+    failedCount: value.failedCount,
+    pendingCount: value.pendingCount,
+    skippedCount: value.skippedCount,
     glossaryCount: value.glossaryCount,
     sourceLang: value.sourceLang,
     targetLang: value.targetLang,
     updatedAt: nowIso(),
-    exists: value.sourcePath.startsWith('demo://'),
-  });
-  recentProjects = recentProjects.slice(0, 12);
-  persistRecent();
+  };
+  projectEntries = [
+    entry,
+    ...projectEntries.filter((item) => item.sourcePath !== entry.sourcePath),
+  ].slice(0, 12);
+  persistProjects();
+}
+
+/** 模拟“重新加载源文件”：原文未变且已完成的译文保留，其余条目重置为待处理。 */
+function applyMockReload(previous: MockProject | null): void {
+  if (!project) {
+    return;
+  }
+  const completedBySource = new Map<string, string[][]>();
+  if (previous) {
+    for (const group of previous.groups) {
+      for (const item of group.items) {
+        if (item.status !== 'done') {
+          continue;
+        }
+        const key = item.sourceSegments.join('\n');
+        const list = completedBySource.get(key) ?? [];
+        list.push([...item.targetSegments]);
+        completedBySource.set(key, list);
+      }
+    }
+  }
+  for (const group of project.groups) {
+    for (const item of group.items) {
+      item.targetSegments = [...item.sourceSegments];
+      item.status = hasTranslatableText(item.sourceSegments.join('\n')) ? 'pending' : 'skipped';
+      item.error = null;
+      item.reference = null;
+      item.skipped = false;
+      item.manual = false;
+      if (item.status !== 'pending') {
+        continue;
+      }
+      const key = item.sourceSegments.join('\n');
+      const target = completedBySource.get(key)?.shift();
+      if (target && target.length === item.sourceSegments.length) {
+        item.targetSegments = target;
+        item.status = 'done';
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- 任务模拟
@@ -971,17 +1020,17 @@ export const mockBackend: Backend = {
     };
   },
 
-  async getRecentProjects() {
-    return recentProjects.map((entry) => ({ ...entry }));
+  async listProjects() {
+    return projectEntries.map((entry) => ({ ...entry }));
   },
 
-  async removeRecentProject(sourcePath: string) {
-    recentProjects = recentProjects.filter((entry) => entry.sourcePath !== sourcePath);
-    persistRecent();
+  async projectSourceStatus() {
+    return { exists: true, changed: false };
   },
 
-  async openProject(source: ProjectSource) {
+  async openProject(source: ProjectSource, reloadSource = false) {
     await delay(400);
+    const previous = project && project.sourcePath === source.path ? project : null;
     if (source.text) {
       const parsed = parseSource(source.text);
       project = buildProject(source.path, parsed);
@@ -994,11 +1043,14 @@ export const mockBackend: Backend = {
     } else {
       throw new Error('浏览器预览无法读取本地文件，请重新选择文件或使用桌面版');
     }
+    if (reloadSource) {
+      applyMockReload(previous);
+    }
     resetJob(jobStates.translate);
     resetJob(jobStates.glossary);
     glossaryByPath.set(project.sourcePath, terms.map((term) => ({ ...term })));
     const value = summary();
-    upsertRecent(value);
+    upsertProject(value);
     return value;
   },
 
@@ -1184,7 +1236,7 @@ export const mockBackend: Backend = {
       });
     }
     project.updatedAt = nowIso();
-    upsertRecent(summary());
+    upsertProject(summary());
     return report;
   },
 

@@ -228,6 +228,8 @@ pub const WORKSPACE_VERSION: u32 = 1;
 pub struct Project {
     pub version: u32,
     pub saved_at: String,
+    /// 上次加载源文件时的内容哈希，用于判断源文件是否被修改。
+    pub source_hash: String,
     pub source_path: String,
     pub file_name: String,
     pub source_lang: String,
@@ -241,6 +243,7 @@ impl Default for Project {
         Self {
             version: WORKSPACE_VERSION,
             saved_at: String::new(),
+            source_hash: String::new(),
             source_path: String::new(),
             file_name: String::new(),
             source_lang: "ja".to_string(),
@@ -416,6 +419,7 @@ impl Project {
         Ok(Self {
             version: WORKSPACE_VERSION,
             saved_at: String::new(),
+            source_hash: String::new(),
             source_path: source_path.to_string(),
             file_name,
             source_lang: "ja".to_string(),
@@ -585,6 +589,66 @@ impl Project {
                 }
             }
         }
+    }
+
+    /// 按源文件重建项目后，用上一版数据补齐译文。
+    ///
+    /// 规则：
+    /// - 原文与上一版完全一致且已完成的条目，保留译文（人工标记一并保留）；
+    /// - 失败、待处理、超长跳过的条目重置为待处理；
+    /// - 源文件中已不存在的条目不会出现在新项目里，其原文与译文一并丢弃；
+    /// - 术语表与术语收集进度由工作区文件保存，不受影响。
+    pub fn apply_reload_from(&mut self, previous: &Project) {
+        use std::collections::{HashMap, VecDeque};
+
+        // 按原文收集上一版已完成的译文；相同原文按出现顺序依次消费
+        let mut completed: HashMap<String, VecDeque<(Vec<String>, bool)>> = HashMap::new();
+        for group in &previous.groups {
+            for item in &group.items {
+                if item.status != ItemStatus::Done {
+                    continue;
+                }
+                let key = item.source_text();
+                if key.trim().is_empty() || item.target_segments == item.source_segments {
+                    continue;
+                }
+                completed
+                    .entry(key)
+                    .or_default()
+                    .push_back((item.target_segments.clone(), item.manual));
+            }
+        }
+
+        for group in &mut self.groups {
+            for item in &mut group.items {
+                item.target_segments = item.source_segments.clone();
+                item.status = if item.is_translatable() {
+                    ItemStatus::Pending
+                } else {
+                    ItemStatus::Skipped
+                };
+                item.error = None;
+                item.reference = None;
+                item.skipped = false;
+                item.manual = false;
+
+                if item.status != ItemStatus::Pending {
+                    continue;
+                }
+                let key = item.source_text();
+                if let Some(queue) = completed.get_mut(&key) {
+                    if let Some((target, manual)) = queue.pop_front() {
+                        // 分段数量必须与原文一致，避免结构变化导致错位
+                        if target.len() == item.source_segments.len() {
+                            item.target_segments = target;
+                            item.status = ItemStatus::Done;
+                            item.manual = manual;
+                        }
+                    }
+                }
+            }
+        }
+        self.job = JobMeta::default();
     }
 
     /// 从头执行：保留旧译文作为参考，全部重置为待处理。
@@ -871,6 +935,32 @@ mod tests {
         assert_eq!(counts.skipped_count, 2);
         assert_eq!(counts.done_count, 0);
         assert_eq!(counts.pending_count, 1);
+    }
+
+    #[test]
+    fn reload_keeps_completed_translations_and_drops_missing_items() {
+        // 上一版项目：三条条目，其中“回復薬”已翻译完成
+        let previous = Project::parse("D:/data/FunnyGameTranslations.json", SAMPLE).unwrap();
+        // 新源文件：删掉了第三条“複数”，其余原文不变
+        let next = r#"[
+          {"id": "g1", "translations": [
+            {"original": "佐伯", "original_sequence": ["佐伯"], "translation_sequence": ["佐伯"]},
+            {"original": "回復薬", "original_sequence": ["回復薬"], "translation_sequence": ["回復薬"]}
+          ]}
+        ]"#;
+        let mut project = Project::parse("D:/data/FunnyGameTranslations.json", next).unwrap();
+        project.job.phase = "running".to_string();
+
+        project.apply_reload_from(&previous);
+
+        assert_eq!(project.groups[0].items.len(), 2);
+        // 未翻译的条目保持待处理
+        assert_eq!(project.groups[0].items[0].status, ItemStatus::Pending);
+        // 原文未变且已完成的条目保留译文
+        let kept = &project.groups[0].items[1];
+        assert_eq!(kept.status, ItemStatus::Done);
+        assert_eq!(kept.translation_text(), "回复药");
+        assert_eq!(project.job.phase, "idle");
     }
 
     #[test]

@@ -299,10 +299,13 @@ npx tsc --noEmit
 
 - 全局设置：`<exe 目录>/com.funnygameplayer.translator/settings.json`
 - 项目工作区：`<exe 目录>/com.funnygameplayer.translator/workspaces/<文件名>-<路径哈希>/`
-  - `project.json`：项目条目、译文与翻译状态。
+  - `project.json`：项目条目、译文与翻译状态（含源文件哈希）。
   - `glossary.json`：术语表。
   - `glossary_progress.json`：已完成术语收集的分组。
-- 最近项目：`<exe 目录>/com.funnygameplayer.translator/recent.json`
+  - `meta.json`：工作区摘要，供“所有项目”列表快速读取（启动时扫描 workspaces 目录）。
+  - `debug.log`：debug 构建下的 AI 请求日志（release 不产生）。
+
+项目列表不再单独保存：启动时扫描 `workspaces/*/project.json`，按更新时间倒序展示，源 JSON 文件仅作为参考，删除后仍可使用工作区副本打开。打开时若源文件哈希与记录不一致，会提示是否重新加载（重新加载只重置译文，术语表与术语收集进度保留）。
 
 首次切换到程序目录时，会把旧的 `%APPDATA%/com.funnygameplayer.translator` 数据复制过来（已存在的文件不覆盖）。
 

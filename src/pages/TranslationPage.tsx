@@ -219,20 +219,10 @@ export default function TranslationPage() {
         description="按字符与条目上限自动分批，多批次并发执行；术语会注入匹配到的原文，失败条目可继续执行重试。"
         actions={
           <>
-            <Button
-              variant="outlined"
-              startIcon={<FileUploadOutlinedIcon />}
-              onClick={() => void handleImport()}
-              disabled={fileBusy}
-            >
+            <Button variant="outlined" startIcon={<FileDownloadOutlinedIcon />} onClick={() => void handleImport()} disabled={fileBusy}>
               导入译文
             </Button>
-            <Button
-              variant="contained"
-              startIcon={<FileDownloadOutlinedIcon />}
-              onClick={() => void handleExport()}
-              disabled={fileBusy}
-            >
+            <Button variant="contained" startIcon={<FileUploadOutlinedIcon />} onClick={() => void handleExport()} disabled={fileBusy}>
               导出译文
             </Button>
           </>
@@ -249,19 +239,19 @@ export default function TranslationPage() {
               startLabel="开始翻译"
               busy={busyAction !== null}
               onStart={handleStart}
-              onStop={() => void stopJob('translate')}
+              onStop={() => void stopJob("translate")}
             />
           }
         >
           <TaskProgress snapshot={translate} />
 
-          {translate && translate.phase === 'completed' && translate.failed > 0 && (
+          {translate && translate.failed > 0 && translate.phase !== "running" && (
             <Alert
               severity="warning"
               variant="outlined"
               sx={{ mt: 2 }}
               action={
-                <Button size="small" onClick={() => void startJob('translate', false)}>
+                <Button size="small" onClick={() => void startJob("translate", false)}>
                   继续执行
                 </Button>
               }
@@ -271,25 +261,20 @@ export default function TranslationPage() {
           )}
 
           <Box sx={{ mt: 2 }}>
-            <LogPanel
-              logs={translate?.logs ?? []}
-              onClear={() => void clearLogs('translate')}
-            />
+            <LogPanel logs={translate?.logs ?? []} onClear={() => void clearLogs("translate")} />
           </Box>
         </SectionCard>
 
         {importReport && (
-          <Alert severity={importReport.mismatched > 0 ? 'warning' : 'success'} onClose={() => setImportReport(null)}>
+          <Alert severity={importReport.mismatched > 0 ? "warning" : "success"} onClose={() => setImportReport(null)}>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
               译文导入结果
             </Typography>
             <Typography variant="body2">
-              匹配分组 {importReport.matchedGroups} / {importReport.totalGroups}，应用{' '}
-              {formatNumber(importReport.applied)} 条，跳过 {formatNumber(importReport.skipped)} 条，
-              原文不匹配 {formatNumber(importReport.mismatched)} 条，未知分组{' '}
+              匹配分组 {importReport.matchedGroups} / {importReport.totalGroups}，应用 {formatNumber(importReport.applied)} 条，跳过{" "}
+              {formatNumber(importReport.skipped)} 条， 原文不匹配 {formatNumber(importReport.mismatched)} 条，未知分组{" "}
               {formatNumber(importReport.unknownGroups)} 个。
-              {importReport.mismatched > 0 &&
-                '不匹配的条目未被覆盖，请确认导入文件与当前源文件一致。'}
+              {importReport.mismatched > 0 && "不匹配的条目未被覆盖，请确认导入文件与当前源文件一致。"}
             </Typography>
           </Alert>
         )}
@@ -298,32 +283,20 @@ export default function TranslationPage() {
           title="原文与译文"
           subtitle={`共 ${formatNumber(summary.itemCount)} 条 · 覆盖率 ${percent}% · 修改立即保存`}
           action={
-            <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+            <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}>
               <Chip color="success" variant="outlined" label={`已完成 ${formatNumber(summary.doneCount)}`} />
-              <Chip
-                color={summary.failedCount > 0 ? 'error' : 'default'}
-                variant="outlined"
-                label={`失败 ${formatNumber(summary.failedCount)}`}
-              />
+              <Chip color={summary.failedCount > 0 ? "error" : "default"} variant="outlined" label={`失败 ${formatNumber(summary.failedCount)}`} />
               <Chip variant="outlined" label={`待处理 ${formatNumber(summary.pendingCount)}`} />
-              <Chip
-                variant="outlined"
-                label={`无需翻译 ${formatNumber(summary.skippedCount)}`}
-              />
+              <Chip variant="outlined" label={`无需翻译 ${formatNumber(summary.skippedCount)}`} />
             </Box>
           }
         >
-          <Stack
-            direction={{ xs: 'column', md: 'row' }}
-            spacing={1.25}
-            sx={{ mb: 1.5, flexWrap: 'wrap', alignItems: { md: 'center' } }}
-            useFlexGap
-          >
+          <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} sx={{ mb: 1.5, flexWrap: "wrap", alignItems: { md: "center" } }} useFlexGap>
             <TextField
               value={query.keyword}
               onChange={(event) => updateQuery({ keyword: event.target.value, page: 1 })}
               placeholder="搜索原文或译文"
-              sx={{ width: { xs: '100%', md: 260 } }}
+              sx={{ width: { xs: "100%", md: 260 } }}
               slotProps={{
                 input: {
                   startAdornment: (
@@ -338,10 +311,8 @@ export default function TranslationPage() {
               select
               label="状态"
               value={query.status}
-              onChange={(event) =>
-                updateQuery({ status: event.target.value as ItemQuery['status'], page: 1 })
-              }
-              sx={{ width: { xs: '100%', md: 130 } }}
+              onChange={(event) => updateQuery({ status: event.target.value as ItemQuery["status"], page: 1 })}
+              sx={{ width: { xs: "100%", md: 130 } }}
             >
               <MenuItem value="all">全部状态</MenuItem>
               <MenuItem value="pending">待处理</MenuItem>
@@ -352,14 +323,12 @@ export default function TranslationPage() {
             <Autocomplete
               options={summary.groups}
               value={selectedGroup}
-              onChange={(_event, value) =>
-                updateQuery({ groupIndex: value?.index ?? null, page: 1 })
-              }
+              onChange={(_event, value) => updateQuery({ groupIndex: value?.index ?? null, page: 1 })}
               getOptionLabel={(option) => `#${option.index} ${option.id}`}
               isOptionEqualToValue={(option, value) => option.index === value.index}
               renderOption={(props, option) => (
                 <Box component="li" {...props} key={option.index}>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', width: '100%' }}>
+                  <Box sx={{ display: "flex", gap: 1, alignItems: "center", width: "100%" }}>
                     <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>
                       {option.id}
                     </Typography>
@@ -369,19 +338,13 @@ export default function TranslationPage() {
                   </Box>
                 </Box>
               )}
-              renderInput={(params) => (
-                <TextField {...params} label="分组" placeholder="全部分组" />
-              )}
-              sx={{ width: { xs: '100%', md: 260 } }}
+              renderInput={(params) => <TextField {...params} label="分组" placeholder="全部分组" />}
+              sx={{ width: { xs: "100%", md: 260 } }}
             />
             <Box sx={{ flex: 1 }} />
             <Tooltip title="刷新当前列表">
               <span>
-                <IconButton
-                  aria-label="刷新条目列表"
-                  onClick={() => void loadItems()}
-                  disabled={loading}
-                >
+                <IconButton aria-label="刷新条目列表" onClick={() => void loadItems()} disabled={loading}>
                   <RefreshIcon />
                 </IconButton>
               </span>
@@ -390,13 +353,13 @@ export default function TranslationPage() {
 
           <Box sx={{ height: 3, mb: 1 }}>{loading && <LinearProgress />}</Box>
 
-          <TableContainer sx={{ border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <TableContainer sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
             <Table size="small" aria-label="原文与译文">
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ width: 88 }}>状态</TableCell>
-                  <TableCell sx={{ width: '40%' }}>原文</TableCell>
-                  <TableCell sx={{ width: '40%' }}>译文</TableCell>
+                  <TableCell sx={{ width: "40%" }}>原文</TableCell>
+                  <TableCell sx={{ width: "40%" }}>译文</TableCell>
                   <TableCell align="right" sx={{ width: 64 }}>
                     操作
                   </TableCell>
@@ -406,14 +369,10 @@ export default function TranslationPage() {
                 {items.map((item) => (
                   <TableRow key={item.key} hover>
                     <TableCell>
-                      <Stack spacing={0.5} sx={{ alignItems: 'flex-start' }}>
+                      <Stack spacing={0.5} sx={{ alignItems: "flex-start" }}>
                         <StatusChip status={item.status} />
-                        {item.manual && (
-                          <Chip size="small" color="primary" variant="outlined" label="人工" />
-                        )}
-                        {item.skipped && (
-                          <Chip size="small" color="warning" variant="outlined" label="超长跳过" />
-                        )}
+                        {item.manual && <Chip size="small" color="primary" variant="outlined" label="人工" />}
+                        {item.skipped && <Chip size="small" color="warning" variant="outlined" label="超长跳过" />}
                       </Stack>
                     </TableCell>
                     <TableCell>
@@ -421,16 +380,15 @@ export default function TranslationPage() {
                         {item.group} · 第 {item.indexInGroup + 1} 条
                       </Typography>
                       <Typography variant="body2" sx={clampSx} title={item.original}>
-                        {item.original || '（空文本）'}
+                        {item.original || "（空文本）"}
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      {item.status === 'skipped' ? (
+                      {item.status === "skipped" ? (
                         <Typography variant="caption" color="text.disabled">
                           无需翻译
                         </Typography>
-                      ) : item.translation &&
-                        !(item.status === 'pending' && item.translation === item.original) ? (
+                      ) : item.translation && !(item.status === "pending" && item.translation === item.original) ? (
                         <Typography variant="body2" sx={clampSx} title={item.translation}>
                           {item.translation}
                         </Typography>
@@ -440,12 +398,7 @@ export default function TranslationPage() {
                         </Typography>
                       )}
                       {item.error && (
-                        <Typography
-                          variant="caption"
-                          color="error.main"
-                          display="block"
-                          sx={{ mt: 0.5, wordBreak: 'break-word' }}
-                        >
+                        <Typography variant="caption" color="error.main" display="block" sx={{ mt: 0.5, wordBreak: "break-word" }}>
                           {item.error}
                         </Typography>
                       )}
@@ -471,15 +424,11 @@ export default function TranslationPage() {
             {items.length === 0 && (
               <EmptyState
                 icon={<TranslateIcon fontSize="inherit" />}
-                title={
-                  query.keyword || query.status !== 'all' || groupIndex !== null
-                    ? '没有匹配的条目'
-                    : '还没有可显示的条目'
-                }
+                title={query.keyword || query.status !== "all" || groupIndex !== null ? "没有匹配的条目" : "还没有可显示的条目"}
                 description={
-                  query.keyword || query.status !== 'all' || groupIndex !== null
-                    ? '尝试清空搜索条件、切换状态或选择其他分组。'
-                    : '导入源文件后即可在这里查看原文与译文。'
+                  query.keyword || query.status !== "all" || groupIndex !== null
+                    ? "尝试清空搜索条件、切换状态或选择其他分组。"
+                    : "导入源文件后即可在这里查看原文与译文。"
                 }
                 compact
               />
@@ -493,13 +442,9 @@ export default function TranslationPage() {
             rowsPerPage={query.pageSize}
             rowsPerPageOptions={[10, 20, 50, 100]}
             onPageChange={(_event, nextPage) => updateQuery({ page: nextPage + 1 })}
-            onRowsPerPageChange={(event) =>
-              updateQuery({ pageSize: Number(event.target.value), page: 1 })
-            }
+            onRowsPerPageChange={(event) => updateQuery({ pageSize: Number(event.target.value), page: 1 })}
             labelRowsPerPage="每页"
-            labelDisplayedRows={({ from, to, count }) =>
-              `${formatNumber(from)}-${formatNumber(to)} / ${formatNumber(count)}`
-            }
+            labelDisplayedRows={({ from, to, count }) => `${formatNumber(from)}-${formatNumber(to)} / ${formatNumber(count)}`}
           />
         </SectionCard>
       </Stack>
@@ -518,11 +463,11 @@ export default function TranslationPage() {
         description="所有条目会重置为待处理，旧译文将作为参考随请求发送给模型重新翻译。此操作会覆盖当前译文，建议先导出备份。"
         confirmLabel="从头执行"
         danger
-        loading={busyAction === 'start-translate'}
+        loading={busyAction === "start-translate"}
         onCancel={() => setRestartOpen(false)}
         onConfirm={() => {
           setRestartOpen(false);
-          void startJob('translate', true);
+          void startJob("translate", true);
         }}
       />
     </>

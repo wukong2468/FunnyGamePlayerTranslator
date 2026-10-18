@@ -11,10 +11,11 @@ import type {
   ItemQuery,
   JobKind,
   JobSnapshots,
+  ProjectEntry,
   ProjectSource,
   ProjectSummary,
-  RecentProject,
   SettingsInput,
+  SourceStatus,
   SettingsView,
   TermPage,
   TermQuery,
@@ -32,12 +33,12 @@ export const tauriBackend: Backend = {
   testConnection: (input: ApiSettingsInput) =>
     invoke<TestConnectionResult>('test_connection', { input }),
 
-  getRecentProjects: () => invoke<RecentProject[]>('get_recent_projects'),
-  removeRecentProject: (sourcePath: string) =>
-    invoke<void>('remove_recent_project', { sourcePath }),
+  listProjects: () => invoke<ProjectEntry[]>('list_projects'),
+  projectSourceStatus: (sourcePath: string) =>
+    invoke<SourceStatus>('project_source_status', { sourcePath }),
 
-  openProject: (source: ProjectSource) =>
-    invoke<ProjectSummary>('open_project', { sourcePath: source.path }),
+  openProject: (source: ProjectSource, reloadSource = false) =>
+    invoke<ProjectSummary>('open_project', { sourcePath: source.path, reloadSource }),
   getProjectSummary: () => invoke<ProjectSummary>('get_project_summary'),
   setLanguages: (sourceLang: string, targetLang: string) =>
     invoke<ProjectSummary>('set_languages', { sourceLang, targetLang }),

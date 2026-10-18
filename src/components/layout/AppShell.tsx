@@ -3,7 +3,6 @@ import {
   AppBar,
   Avatar,
   Box,
-  Button,
   Chip,
   Divider,
   Drawer,
@@ -21,7 +20,6 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
-import FolderOpenOutlinedIcon from '@mui/icons-material/FolderOpenOutlined';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
@@ -32,7 +30,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { startJobsPolling, useJobsStore } from '@/store/useJobsStore';
 import { useAppStore } from '@/store/useAppStore';
 import type { Route } from '@/types';
-import { pickJsonFile } from '@/utils/fileDialog';
 import { formatNumber, formatPercent } from '@/utils/format';
 
 import GlossaryPage from '@/pages/GlossaryPage';
@@ -53,14 +50,14 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { route: 'welcome', label: '首页', icon: <HomeOutlinedIcon />, requiresProject: false },
   { route: 'config', label: '翻译配置', icon: <TuneOutlinedIcon />, requiresProject: true },
-  { route: 'glossary', label: '收集术语表', icon: <MenuBookOutlinedIcon />, requiresProject: true },
+  { route: 'glossary', label: '收集术语', icon: <MenuBookOutlinedIcon />, requiresProject: true },
   { route: 'translate', label: '翻译文本', icon: <TranslateIcon />, requiresProject: true },
 ];
 
 const PAGE_TITLES: Record<Route, string> = {
   welcome: "欢迎使用",
   config: "翻译配置",
-  glossary: "收集术语表",
+  glossary: "收集术语",
   translate: "翻译文本",
   settings: "全局设置",
 };
@@ -73,10 +70,7 @@ export function AppShell() {
 
   const route = useAppStore((state) => state.route);
   const summary = useAppStore((state) => state.summary);
-  const notify = useAppStore((state) => state.notify);
   const navigate = useAppStore((state) => state.navigate);
-  const openProject = useAppStore((state) => state.openProject);
-  const opening = useAppStore((state) => state.opening);
   const snackbar = useAppStore((state) => state.snackbar);
   const dismissSnackbar = useAppStore((state) => state.dismissSnackbar);
 
@@ -103,21 +97,6 @@ export function AppShell() {
   const running = snapshots
     ? (['translate', 'glossary'] as const).filter((kind) => snapshots[kind].phase === 'running')
     : [];
-
-  const handlePickFile = async () => {
-    try {
-      const picked = await pickJsonFile('选择 FunnyGameTranslations.json');
-      if (!picked) {
-        return;
-      }
-      const ok = await openProject({ path: picked.path, text: picked.text });
-      if (ok) {
-        setDrawerOpen(false);
-      }
-    } catch (error) {
-      notify('error', error instanceof Error ? error.message : '打开文件失败');
-    }
-  };
 
   const renderPage = () => {
     switch (route) {
@@ -280,23 +259,6 @@ export function AppShell() {
                 label={running.includes('translate') ? '翻译任务执行中' : '术语收集执行中'}
               />
             )}
-            {summary && (
-              <Chip
-                variant="outlined"
-                color={percent >= 100 ? 'success' : 'default'}
-                label={`${percent}%`}
-                sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
-              />
-            )}
-            <Button
-              variant={summary ? 'outlined' : 'contained'}
-              startIcon={<FolderOpenOutlinedIcon />}
-              onClick={handlePickFile}
-              disabled={opening}
-              sx={{ whiteSpace: 'nowrap' }}
-            >
-              {opening ? '正在打开…' : summary ? '更换文件' : '打开文件'}
-            </Button>
           </Toolbar>
           {summary && (
             <LinearProgress variant="determinate" value={percent} sx={{ height: 2 }} />

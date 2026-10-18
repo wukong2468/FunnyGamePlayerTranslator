@@ -1,29 +1,17 @@
-import {
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  List,
-  ListItem,
-  Paper,
-  Tooltip,
-  Typography,
-} from '@mui/material';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import { Box, Button, Chip, List, ListItem, Paper, Typography } from '@mui/material';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
 import { useTheme } from '@mui/material/styles';
 
-import type { RecentProject } from '@/types';
-import { formatDateTime, formatNumber } from '@/utils/format';
+import type { ProjectEntry } from '@/types';
+import { formatDateTime } from '@/utils/format';
 
-interface RecentProjectListProps {
-  items: RecentProject[];
+interface ProjectListProps {
+  items: ProjectEntry[];
   busy: boolean;
-  onOpen: (item: RecentProject) => void;
-  onRemove: (item: RecentProject) => void;
+  onOpen: (item: ProjectEntry) => void;
 }
 
-export function RecentProjectList({ items, busy, onOpen, onRemove }: RecentProjectListProps) {
+export function ProjectList({ items, busy, onOpen }: ProjectListProps) {
   const theme = useTheme();
 
   return (
@@ -39,7 +27,7 @@ export function RecentProjectList({ items, busy, onOpen, onRemove }: RecentProje
               sx={{
                 width: 34,
                 height: 34,
-                borderradius: 1,
+                borderRadius: 1,
                 display: 'grid',
                 placeItems: 'center',
                 bgcolor: 'action.hover',
@@ -60,7 +48,7 @@ export function RecentProjectList({ items, busy, onOpen, onRemove }: RecentProje
                 component="p"
                 sx={{ wordBreak: 'break-all' }}
               >
-                {item.exists ? item.sourcePath : '文件已移动或删除（浏览器预览无法访问本地路径）'}
+                {item.sourcePath}
               </Typography>
               <Box
                 sx={{
@@ -71,12 +59,6 @@ export function RecentProjectList({ items, busy, onOpen, onRemove }: RecentProje
                   alignItems: 'center',
                 }}
               >
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={`${formatNumber(item.doneCount)} / ${formatNumber(item.itemCount)} 条`}
-                />
-                <Chip size="small" variant="outlined" label={`术语 ${formatNumber(item.glossaryCount)}`} />
                 <Chip
                   size="small"
                   variant="outlined"
@@ -92,21 +74,9 @@ export function RecentProjectList({ items, busy, onOpen, onRemove }: RecentProje
               </Box>
             </Box>
             <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flex: 'none' }}>
-              <Button size="small" onClick={() => onOpen(item)} disabled={busy || !item.exists}>
+              <Button size="small" onClick={() => onOpen(item)} disabled={busy}>
                 打开
               </Button>
-              <Tooltip title="从最近项目中移除">
-                <span>
-                  <IconButton
-                    size="small"
-                    aria-label={`移除 ${item.fileName}`}
-                    onClick={() => onRemove(item)}
-                    disabled={busy}
-                  >
-                    <DeleteOutlineIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
             </Box>
           </ListItem>
         ))}

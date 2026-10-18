@@ -121,16 +121,26 @@ export interface ProjectSummary {
   glossaryJob: JobMeta;
 }
 
-export interface RecentProject {
+/** 项目工作区的概要信息（“所有项目”列表中的一项）。 */
+export interface ProjectEntry {
   sourcePath: string;
   fileName: string;
+  workspacePath: string;
   itemCount: number;
   doneCount: number;
+  failedCount: number;
+  pendingCount: number;
+  skippedCount: number;
   glossaryCount: number;
   sourceLang: string;
   targetLang: string;
   updatedAt: string;
+}
+
+/** 源文件与项目副本的比对结果。 */
+export interface SourceStatus {
   exists: boolean;
+  changed: boolean;
 }
 
 export interface ItemQuery {
