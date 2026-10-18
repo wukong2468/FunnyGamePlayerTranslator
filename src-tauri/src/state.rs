@@ -261,6 +261,8 @@ impl AppState {
 
         let workspace = self.workspace_dir(&source_path);
         std::fs::create_dir_all(&workspace).ok();
+        // debug 构建下，调试日志写入当前项目工作区的 debug.log
+        crate::ai::debug_log::set_workspace(&workspace);
 
         if workspace.join(PROJECT_FILE).exists() {
             match storage::read_json::<Project>(&workspace.join(PROJECT_FILE)) {

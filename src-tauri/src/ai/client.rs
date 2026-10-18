@@ -56,6 +56,54 @@ fn timeout_secs(api: &ApiSettings) -> f64 {
     }
 }
 
+/// 请求序号，便于在并发日志中区分不同请求（仅 debug 编译使用）。
+#[cfg(debug_assertions)]
+fn next_request_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(not(debug_assertions))]
+#[inline]
+fn next_request_seq() -> u64 {
+    0
+}
+
+/// 记录发往接口的完整提示词：仅 debug 编译有效（release 会被编译掉）。
+#[cfg(debug_assertions)]
+fn debug_log_request(seq: u64, api: &ApiSettings, system: &str, user: &str) {
+    let block = format!(
+        "[AI #{seq}] 请求 {}\n模型：{} | temperature={} | json_mode={}\n----- system -----\n{}\n----- user -----\n{}",
+        endpoint(&api.base_url),
+        api.model,
+        api.temperature,
+        api.json_mode,
+        system,
+        user
+    );
+    super::debug_log::log_block(&block);
+}
+
+#[cfg(not(debug_assertions))]
+#[inline]
+fn debug_log_request(_seq: u64, _api: &ApiSettings, _system: &str, _user: &str) {}
+
+/// 记录接口返回内容：仅 debug 编译有效。
+#[cfg(debug_assertions)]
+fn debug_log_response(seq: u64, content: &str) {
+    let block = format!(
+        "[AI #{seq}] 响应（{} 字符）\n{}",
+        content.chars().count(),
+        content
+    );
+    super::debug_log::log_block(&block);
+}
+
+#[cfg(not(debug_assertions))]
+#[inline]
+fn debug_log_response(_seq: u64, _content: &str) {}
+
 /// 发起一次对话请求，返回模型输出的文本内容。
 pub async fn chat(
     http: &Client,
@@ -67,6 +115,9 @@ pub async fn chat(
     if api.model.trim().is_empty() {
         return Err(AiError::fatal("尚未配置模型名称，请先在设置中填写模型"));
     }
+
+    let seq = next_request_seq();
+    debug_log_request(seq, api, system, user);
 
     let mut body = json!({
         "model": api.model,
@@ -109,6 +160,7 @@ pub async fn chat(
     };
 
     if !status.is_success() {
+        debug_log_response(seq, &text);
         let brief = redact(&text.chars().take(600).collect::<String>(), key);
         let retryable = status.as_u16() == 408
             || status.as_u16() == 409
@@ -127,8 +179,10 @@ pub async fn chat(
         .map_err(|_| AiError::retryable("接口返回内容不是合法 JSON，可能是网关错误页"))?;
     let content = extract_content(&value)?;
     if content.trim().is_empty() {
+        debug_log_response(seq, &text);
         return Err(AiError::retryable("模型返回内容为空"));
     }
+    debug_log_response(seq, &content);
     Ok(content)
 }
 
