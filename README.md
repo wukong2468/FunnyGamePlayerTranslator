@@ -298,7 +298,7 @@ npx tsc --noEmit
 数据目录位于 **exe 同目录下的 `com.funnygameplayer.translator/`**（绿色版可直接整体拷贝）；若程序目录不可写，则回退到系统数据目录 `%APPDATA%/com.funnygameplayer.translator/`。
 
 - 全局设置：`<exe 目录>/com.funnygameplayer.translator/settings.json`
-- 项目工作区：`<exe 目录>/com.funnygameplayer.translator/workspaces/<文件名>-<路径哈希>/`
+- 项目工作区：`<exe 目录>/com.funnygameplayer.translator/workspaces/<文件名>-<路径哈希 16 位>/`（旧版 8 位目录继续沿用；目录归属冲突时回退完整哈希）
   - `project.json`：项目条目、译文与翻译状态（含源文件哈希）。
   - `glossary.json`：术语表。
   - `glossary_progress.json`：已完成术语收集的分组。

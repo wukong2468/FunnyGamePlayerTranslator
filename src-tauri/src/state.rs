@@ -242,8 +242,34 @@ impl AppState {
         }
     }
 
+    /// 解析项目工作区目录。
+    ///
+    /// - 新项目使用 16 位路径哈希（64 位）目录，重名概率可忽略；
+    /// - 升级前创建的项目继续沿用旧的 8 位哈希目录，避免进度“消失”；
+    /// - 若目录已存在但属于另一个源文件（哈希冲突），改用完整哈希目录兜底。
     pub fn workspace_dir(&self, source_path: &str) -> PathBuf {
-        self.workspace_root.join(storage::workspace_dir_name(source_path))
+        let primary = self
+            .workspace_root
+            .join(storage::workspace_dir_name(source_path));
+        if primary.exists() {
+            if storage::workspace_belongs_to(&primary, source_path) {
+                return primary;
+            }
+            return self
+                .workspace_root
+                .join(storage::workspace_dir_name_with_hash(
+                    source_path,
+                    &storage::path_hash_full(source_path),
+                ));
+        }
+
+        let legacy = self
+            .workspace_root
+            .join(storage::workspace_dir_name_legacy(source_path));
+        if legacy.exists() && storage::workspace_belongs_to(&legacy, source_path) {
+            return legacy;
+        }
+        primary
     }
 
     /// 打开项目：优先按源文件解析并与工作区副本合并。

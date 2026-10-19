@@ -113,16 +113,44 @@ fn temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{file_name}.tmp"))
 }
 
-/// 路径哈希（取 SHA256 前 8 个十六进制字符），用于隔离同名不同目录的项目工作区。
+/// 路径哈希（取 SHA256 前 16 个十六进制字符 = 64 位），用于隔离同名不同目录的项目工作区。
 pub fn path_hash(path: &str) -> String {
+    hash_prefix(path, 8)
+}
+
+/// 旧版工作区使用的前 8 个十六进制字符（兼容已存在的工作区目录）。
+pub fn path_hash_legacy(path: &str) -> String {
+    hash_prefix(path, 4)
+}
+
+/// 完整路径哈希（64 个十六进制字符），仅在极端哈希冲突时用于兜底目录名。
+pub fn path_hash_full(path: &str) -> String {
+    hash_prefix(path, 32)
+}
+
+fn hash_prefix(path: &str, bytes: usize) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.to_lowercase().as_bytes());
-    let digest = hasher.finalize();
-    digest.iter().take(4).map(|byte| format!("{byte:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .take(bytes)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// 生成工作区目录名：`<文件名主干>-<路径哈希>`。
 pub fn workspace_dir_name(source_path: &str) -> String {
+    workspace_dir_name_with_hash(source_path, &path_hash(source_path))
+}
+
+/// 旧版工作区目录名（8 位哈希），用于兼容升级前创建的项目。
+pub fn workspace_dir_name_legacy(source_path: &str) -> String {
+    workspace_dir_name_with_hash(source_path, &path_hash_legacy(source_path))
+}
+
+/// 使用指定哈希拼接工作区目录名，便于冲突时换用完整哈希。
+pub fn workspace_dir_name_with_hash(source_path: &str, hash: &str) -> String {
     let stem = Path::new(source_path)
         .file_stem()
         .and_then(|value| value.to_str())
@@ -132,12 +160,88 @@ pub fn workspace_dir_name(source_path: &str) -> String {
         .map(|ch| if ch.is_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
         .take(60)
         .collect();
-    format!("{safe}-{}", path_hash(source_path))
+    format!("{safe}-{hash}")
+}
+
+/// 判断工作区目录是否属于该源文件（用于识别路径哈希冲突）。
+///
+/// 优先读轻量的 `meta.json`，缺失时回退 `project.json`；
+/// 目录为空或读不出归属信息时按“属于”处理，保持旧行为。
+pub fn workspace_belongs_to(workspace: &Path, source_path: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Owner {
+        #[serde(default)]
+        source_path: String,
+    }
+
+    for name in ["meta.json", "project.json"] {
+        let path = workspace.join(name);
+        if !path.exists() {
+            continue;
+        }
+        if let Ok(Some(owner)) = read_json::<Owner>(&path) {
+            if owner.source_path.trim().is_empty() {
+                return true;
+            }
+            return same_source_path(&owner.source_path, source_path);
+        }
+    }
+    true
+}
+
+/// 比较两个源文件路径是否指向同一个文件（大小写与分隔符不敏感）。
+fn same_source_path(left: &str, right: &str) -> bool {
+    let normalize = |value: &str| value.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    normalize(left) == normalize(right)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_names_use_64_bit_hash() {
+        let a = workspace_dir_name("D:/game1/FunnyGameTranslations.json");
+        let b = workspace_dir_name("D:/game2/FunnyGameTranslations.json");
+        assert_ne!(a, b);
+        assert!(a.starts_with("FunnyGameTranslations-"));
+        let hash = a.rsplit('-').next().unwrap();
+        assert_eq!(hash.len(), 16);
+        // 旧版命名仍可复现，用于兼容已存在的工作区
+        let legacy = workspace_dir_name_legacy("D:/game1/FunnyGameTranslations.json");
+        assert_eq!(legacy.rsplit('-').next().unwrap().len(), 8);
+        assert_eq!(path_hash_full("x").len(), 64);
+    }
+
+    #[test]
+    fn workspace_owner_detects_hash_collision() {
+        let dir = std::env::temp_dir().join(format!("fgpt-ws-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("meta.json"),
+            r#"{"sourcePath":"D:/games/A/FunnyGameTranslations.json"}"#,
+        )
+        .unwrap();
+
+        assert!(workspace_belongs_to(
+            &dir,
+            "D:/games/A/FunnyGameTranslations.json"
+        ));
+        // Windows 路径大小写、分隔符不敏感
+        assert!(workspace_belongs_to(
+            &dir,
+            "d:\\games\\a\\FunnyGameTranslations.JSON"
+        ));
+        // 不同源文件 → 判定为冲突
+        assert!(!workspace_belongs_to(
+            &dir,
+            "D:/games/B/FunnyGameTranslations.json"
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn indent4_serializes_multiline_with_four_spaces() {
