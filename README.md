@@ -1,5 +1,7 @@
 # FunnyGamePlayer 文本翻译工具
 
+> 查看 [放弃原因](放弃项目.md)
+
 基于 **Tauri 2 + Rust + React 19 + TypeScript + Material UI** 的游戏文本汉化工具。
 
 读取 FunnyGamePlayer 导出的 `FunnyGameTranslations.json`，自动收集术语表，并通过任意兼容 OpenAI API 协议的接口批量翻译文本，最终导出可直接回填游戏的 JSON 文件。
